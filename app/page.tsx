@@ -10,15 +10,15 @@ export default function HomePage() {
         <header className="mb-10 flex flex-col gap-4 border-b border-white/8 pb-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <Badge variant="subtle" className="mb-3 w-fit">
-              Base project
+              Live workspace
             </Badge>
             <h1 className="font-[family-name:var(--font-display)] text-3xl text-white sm:text-4xl">KISH</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-[color:var(--muted-foreground)]">
-              Knowledge & Intelligent SME Hub, starting with Xero-native accounting connectivity.
+              Knowledge & Intelligent SME Hub for owners who want their Xero data turned into readable priorities.
             </p>
           </div>
           <div className="text-sm leading-6 text-[color:var(--muted-foreground)]">
-            <p>Stack: Next.js 16.2.10, TypeScript, Tailwind CSS v4, shadcn-style components, Xero OAuth 2.0</p>
+            <p>Stack: Next.js 16.2.10, TypeScript, Tailwind CSS v4, Xero OAuth 2.0, optional OpenRouter brief generation</p>
           </div>
         </header>
         <XeroDashboard />
