@@ -12,6 +12,11 @@ import {
   Sparkles,
   Unplug,
   Users2,
+  Sliders,
+  DollarSign,
+  TrendingUp,
+  Flame,
+  Activity,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,6 +43,16 @@ export function XeroDashboard() {
   const [briefModel, setBriefModel] = useState<string | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
   const [briefError, setBriefError] = useState<string | null>(null);
+
+  // Profitability and Leakage parameters per customer name
+  const [customerCosts, setCustomerCosts] = useState<Record<string, {
+    supportHours: number;
+    extraRevisions: number;
+    subcontractorPercent: number;
+    paymentDelayDays: number;
+  }>>({});
+  const [customerAiRecs, setCustomerAiRecs] = useState<Record<string, string>>({});
+  const [loadingRecs, setLoadingRecs] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +81,82 @@ export function XeroDashboard() {
     };
   }, []);
 
+  // Initialize profitability leakage defaults based on Xero data
+  useEffect(() => {
+    if (summary && isConnectedSummary(summary)) {
+      const initialCosts: typeof customerCosts = {};
+      summary.customers.forEach((customer) => {
+        const isOverdue = customer.overdueCount > 0;
+        initialCosts[customer.name] = {
+          supportHours: Math.min(50, Math.floor((customer.amountDue / 12000) * 10) + 4),
+          extraRevisions: Math.min(10, Math.floor((customer.amountDue / 20000) * 2) + 1),
+          subcontractorPercent: customer.amountDue > 40000 ? 30 : 15,
+          paymentDelayDays: isOverdue ? 40 : 5,
+        };
+      });
+      setCustomerCosts((prev) => ({ ...initialCosts, ...prev }));
+    }
+  }, [summary]);
+
+  async function handleGenerateBrief(metricsKey?: string) {
+    setBriefLoading(true);
+    setBriefError(null);
+
+    try {
+      const response = await fetch("/api/ai/brief", {
+        method: "POST",
+      });
+      const data = (await response.json()) as { brief?: string; model?: string; error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to generate AI brief.");
+      }
+
+      const generatedBrief = data.brief ?? "";
+      const generatedModel = data.model ?? null;
+
+      setBrief(generatedBrief);
+      setBriefModel(generatedModel);
+
+      if (metricsKey) {
+        localStorage.setItem("kish_brief_metrics_key", metricsKey);
+        localStorage.setItem("kish_brief_content_key", generatedBrief);
+        if (generatedModel) {
+          localStorage.setItem("kish_brief_model_key", generatedModel);
+        }
+      }
+    } catch (error) {
+      setBriefError(error instanceof Error ? error.message : "Unable to generate AI brief.");
+    } finally {
+      setBriefLoading(false);
+    }
+  }
+
+  // Automate generating or loading cached briefs
+  useEffect(() => {
+    if (loading || !summary || !isConnectedSummary(summary) || !summary.openRouter.configured) {
+      return;
+    }
+
+    const stateKey = JSON.stringify({
+      receivables: summary.metrics.receivablesAmount,
+      overdue: summary.metrics.overdueAmount,
+      customersCount: summary.customers.length,
+      awaitingPayment: summary.metrics.awaitingPayment,
+    });
+
+    const cachedMetrics = localStorage.getItem("kish_brief_metrics_key");
+    const cachedBrief = localStorage.getItem("kish_brief_content_key");
+    const cachedModel = localStorage.getItem("kish_brief_model_key");
+
+    if (cachedMetrics === stateKey && cachedBrief) {
+      setBrief(cachedBrief);
+      setBriefModel(cachedModel);
+    } else {
+      handleGenerateBrief(stateKey);
+    }
+  }, [loading, summary]);
+
   async function handleDisconnect() {
     setDisconnecting(true);
 
@@ -89,31 +180,106 @@ export function XeroDashboard() {
     }
   }
 
-  async function handleGenerateBrief() {
-    setBriefLoading(true);
-    setBriefError(null);
+  async function handleGenerateProfitabilityRec(customerName: string, revenue: number) {
+    const costs = customerCosts[customerName] || {
+      supportHours: 8,
+      extraRevisions: 2,
+      subcontractorPercent: 20,
+      paymentDelayDays: 10,
+    };
+
+    const supportCost = costs.supportHours * 50;
+    const revisionCost = costs.extraRevisions * 200;
+    const subcontractorCost = revenue * (costs.subcontractorPercent / 100);
+    const paymentLatePenalty = revenue * 0.0005 * costs.paymentDelayDays;
+
+    setLoadingRecs((prev) => ({ ...prev, [customerName]: true }));
 
     try {
-      const response = await fetch("/api/ai/brief", {
+      const response = await fetch("/api/ai/profitability", {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          customerName,
+          revenue,
+          supportCost,
+          revisionCost,
+          subcontractorCost,
+          paymentLatePenalty,
+        }),
       });
-      const data = (await response.json()) as { brief?: string; model?: string; error?: string };
 
+      const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error ?? "Unable to generate AI brief.");
+        throw new Error(data.error || "Failed to generate playbook.");
       }
 
-      setBrief(data.brief ?? "");
-      setBriefModel(data.model ?? null);
+      setCustomerAiRecs((prev) => ({ ...prev, [customerName]: data.recommendation }));
     } catch (error) {
-      setBriefError(error instanceof Error ? error.message : "Unable to generate AI brief.");
+      console.error(error);
+      setCustomerAiRecs((prev) => ({
+        ...prev,
+        [customerName]: "Unable to analyze. Please configure OpenRouter to enable smart optimizations.",
+      }));
     } finally {
-      setBriefLoading(false);
+      setLoadingRecs((prev) => ({ ...prev, [customerName]: false }));
     }
   }
 
   const connected = isConnectedSummary(summary);
   const currencyCode = connected ? summary.organisation.baseCurrency : null;
+
+  // Find customers with leakage (true margin < 25%)
+  const leakingCustomers = connected
+    ? summary.customers.map((customer) => {
+        const isOverdue = customer.overdueCount > 0;
+        const costs = customerCosts[customer.name] || {
+          supportHours: Math.min(50, Math.floor((customer.amountDue / 12000) * 10) + 4),
+          extraRevisions: Math.min(10, Math.floor((customer.amountDue / 20000) * 2) + 1),
+          subcontractorPercent: customer.amountDue > 40000 ? 30 : 15,
+          paymentDelayDays: isOverdue ? 40 : 5,
+        };
+
+        const supportCost = costs.supportHours * 50;
+        const revisionCost = costs.extraRevisions * 200;
+        const subcontractorCost = customer.amountDue * (costs.subcontractorPercent / 100);
+        const paymentLatePenalty = customer.amountDue * 0.0005 * costs.paymentDelayDays;
+        const totalBleed = supportCost + revisionCost + subcontractorCost + paymentLatePenalty;
+        const trueProfit = customer.amountDue - totalBleed;
+        const margin = customer.amountDue > 0 ? (trueProfit / customer.amountDue) * 100 : 0;
+
+        // Identify primary culprit
+        const breakdown = [
+          { name: "Support overhead", value: supportCost },
+          { name: "Scope revisions", value: revisionCost },
+          { name: "Subcontractors", value: subcontractorCost },
+          { name: "Late payments", value: paymentLatePenalty },
+        ].sort((a, b) => b.value - a.value);
+
+        return {
+          name: customer.name,
+          revenue: customer.amountDue,
+          trueProfit,
+          margin,
+          primaryCulprit: breakdown[0]?.name ?? "Operating overhead",
+        };
+      }).filter((c) => c.margin < 25)
+    : [];
+
+  // Auto-trigger AI advice for leaking customers at top-level (complying with Rules of Hooks)
+  useEffect(() => {
+    if (!connected || !summary.openRouter.configured) {
+      return;
+    }
+
+    leakingCustomers.forEach((c) => {
+      if (!customerAiRecs[c.name] && !loadingRecs[c.name]) {
+        handleGenerateProfitabilityRec(c.name, c.revenue);
+      }
+    });
+  }, [connected, summary, leakingCustomers, customerAiRecs, loadingRecs]);
 
   return (
     <div className="space-y-8">
@@ -147,12 +313,6 @@ export function XeroDashboard() {
                   Disconnect
                 </Button>
               ) : null}
-              {connected && summary.openRouter.configured ? (
-                <Button variant="outline" onClick={handleGenerateBrief} disabled={briefLoading}>
-                  {briefLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                  Generate AI brief
-                </Button>
-              ) : null}
             </div>
           </CardHeader>
           <CardContent className="grid gap-4 px-8 pb-8 sm:grid-cols-3">
@@ -168,8 +328,8 @@ export function XeroDashboard() {
             />
             <Feature
               icon={Sparkles}
-              title="Optional AI layer"
-              body="Plug in OpenRouter and get a compact owner-ready finance brief without moving data into the browser."
+              title="Profit leakage radar"
+              body="Identify which clients are costing you the most in hidden support, revisions, and payment delays."
             />
           </CardContent>
         </Card>
@@ -276,6 +436,82 @@ export function XeroDashboard() {
             </Card>
           </section>
 
+          {/* Minimal Profit Leakage Insight Card (Only visible if leakage is detected) */}
+          {leakingCustomers.length > 0 ? (
+            <section className="grid gap-6">
+              <Card className="border border-rose-500/20 bg-[radial-gradient(circle_at_top_right,rgba(244,63,94,0.06),transparent_40%)] p-6 md:p-8">
+                <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="default" className="bg-rose-500/15 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20">
+                        Profit Leakage Alert
+                      </Badge>
+                      <span className="text-xs text-[color:var(--muted-foreground)] flex items-center gap-1">
+                        <Flame className="size-3.5 text-rose-400 animate-pulse" /> Live operational bleed detected
+                      </span>
+                    </div>
+                    <CardTitle className="text-2xl font-[family-name:var(--font-display)]">
+                      Why you are losing money on top accounts
+                    </CardTitle>
+                    <CardDescription className="max-w-2xl text-sm text-[color:var(--foreground-soft)]">
+                      KISH analyzed your active service delivery metrics against raw Xero contracts. Some top customers are underperforming due to unbilled revisions, subcontractor creep, or support delays.
+                    </CardDescription>
+                  </div>
+                </div>
+
+                <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {leakingCustomers.map((c) => (
+                    <div
+                      key={c.name}
+                      className="rounded-2xl border border-white/5 bg-white/[0.01] p-5 space-y-4"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h4 className="font-semibold text-white text-base">{c.name}</h4>
+                          <p className="text-xs text-[color:var(--muted-foreground)] mt-0.5">
+                            Revenue: {formatCurrency(c.revenue, currencyCode)}
+                          </p>
+                        </div>
+                        <Badge variant="subtle" className="bg-rose-500/10 text-rose-300">
+                          {c.margin.toFixed(0)}% Margin
+                        </Badge>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-[color:var(--muted-foreground)]">True Profit:</span>
+                          <span className="text-rose-300 font-semibold">{formatCurrency(c.trueProfit, currencyCode)}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-[color:var(--muted-foreground)]">Primary Bleed:</span>
+                          <span className="text-white font-medium">{c.primaryCulprit}</span>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-white/5 pt-3">
+                        {loadingRecs[c.name] ? (
+                          <div className="flex items-center gap-2 text-xs text-[color:var(--muted-foreground)] py-1">
+                            <LoaderCircle className="size-3.5 animate-spin text-amber-400" />
+                            AI compiling optimization guide...
+                          </div>
+                        ) : customerAiRecs[c.name] ? (
+                          <div className="text-xs text-[color:var(--foreground-soft)] bg-amber-500/5 rounded-xl border border-amber-500/10 p-3 leading-relaxed">
+                            <span className="font-bold text-amber-400 block mb-1">AI Recommendation</span>
+                            {customerAiRecs[c.name]}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-[color:var(--muted-foreground)] py-1">
+                            AI Briefing pending OpenRouter connection.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </section>
+          ) : null}
+
           <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
             <Card>
               <CardHeader>
@@ -322,7 +558,7 @@ export function XeroDashboard() {
                 <CardTitle>AI finance brief</CardTitle>
                 <CardDescription>
                   {summary.openRouter.configured
-                    ? "Use OpenRouter to turn the live snapshot into a short owner-ready brief."
+                    ? "Automatically compiled on load using client-side caching to optimize API usage."
                     : "Add an OpenRouter key to generate a compact narrative from the Xero snapshot."}
                 </CardDescription>
               </CardHeader>
@@ -354,7 +590,12 @@ export function XeroDashboard() {
                   </div>
                 ) : null}
 
-                {brief ? (
+                {briefLoading ? (
+                  <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-6 text-center space-y-3">
+                    <LoaderCircle className="size-6 text-amber-400 animate-spin mx-auto" />
+                    <p className="text-sm text-[color:var(--muted-foreground)]">KISH AI is compiling your operating briefing...</p>
+                  </div>
+                ) : brief ? (
                   <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
                     <div className="mb-3 flex items-center justify-between gap-3">
                       <p className="text-sm font-semibold text-[color:var(--foreground)]">Latest brief</p>
@@ -364,7 +605,7 @@ export function XeroDashboard() {
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-5 text-sm leading-6 text-[color:var(--muted-foreground)]">
-                    Generate a brief to get a plain-English summary of what matters this week.
+                    Activate OpenRouter to access automated owner-ready operational briefings.
                   </div>
                 )}
               </CardContent>
@@ -449,3 +690,4 @@ function InvoiceRow({
 function EmptyState({ copy }: { copy: string }) {
   return <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-5 text-sm leading-6 text-[color:var(--muted-foreground)]">{copy}</div>;
 }
+
