@@ -36,16 +36,148 @@ body {
 }
 
 .world-theme {
-  --world-ink: #2f2418;
-  --world-muted: #6f5d4a;
-  --world-panel: #f8edd8;
-  --world-card: #fff8ea;
-  --world-border: #d8c3a2;
-  --world-accent: #c45c26;
+  --world-ink: #17293a;
+  --world-muted: #577085;
+  --world-panel: #f0e5c9;
+  --world-card: rgba(255, 249, 234, 0.92);
+  --world-card-strong: #fff3cf;
+  --world-border: rgba(35, 68, 93, 0.22);
+  --world-accent: #f09c44;
+  --world-accent-2: #f6c85a;
+  --world-accent-soft: rgba(246, 200, 90, 0.42);
   background:
-    radial-gradient(circle at top, rgba(255, 214, 165, 0.35), transparent 28%),
-    linear-gradient(180deg, #f3e2c4 0%, #e8d3b2 100%);
+    radial-gradient(circle at top, rgba(253, 224, 128, 0.26), transparent 28%),
+    linear-gradient(180deg, #8fd1ff 0%, #77b7f0 34%, #6cab64 35%, #4f8c48 100%);
   color: var(--world-ink);
+}
+
+.world-game-shell {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 24%),
+    linear-gradient(180deg, rgba(17, 34, 46, 0.16), rgba(17, 34, 46, 0.08));
+}
+
+.world-panel-shell {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.48)),
+    linear-gradient(180deg, rgba(250, 238, 207, 0.95), rgba(243, 226, 185, 0.95));
+  border: 1px solid var(--world-border);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 14px 50px rgba(16, 43, 64, 0.16);
+  backdrop-filter: blur(10px);
+}
+
+.world-grid-fade {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.45), transparent 80%);
+}
+
+.world-map-frame {
+  background: linear-gradient(180deg, rgba(255, 249, 234, 0.7), rgba(241, 229, 201, 0.45));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 18px 60px rgba(18, 44, 61, 0.22);
+}
+
+.world-map-inner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 24%),
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.03) 0,
+      rgba(255, 255, 255, 0.03) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+  pointer-events: none;
+}
+
+.world-level-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(28, 56, 79, 0.14);
+  background: rgba(255, 248, 229, 0.88);
+  padding: 0.65rem 0.9rem;
+  color: var(--world-ink);
+  font-size: 0.8rem;
+  font-weight: 700;
+  box-shadow: 0 10px 30px rgba(19, 45, 62, 0.12);
+}
+
+.world-level-pill-alt {
+  background: rgba(255, 234, 168, 0.85);
+}
+
+.world-progress-fill {
+  background:
+    linear-gradient(90deg, #f09c44 0%, #f6c85a 60%, #ffe290 100%);
+  box-shadow:
+    inset 0 -1px 0 rgba(137, 88, 15, 0.2),
+    0 0 22px rgba(246, 200, 90, 0.28);
+}
+
+.world-hotspot {
+  transform: translate(-50%, -50%);
+  background: transparent;
+}
+
+.world-hotspot-ring {
+  position: absolute;
+  inset: 16%;
+  border: 2px dashed rgba(255, 250, 230, 0.75);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  opacity: 0.85;
+  transition: transform 180ms ease, opacity 180ms ease, background 180ms ease;
+  animation: world-hotspot-pulse 2.4s ease-in-out infinite;
+}
+
+.world-hotspot-pill {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  background: rgba(24, 49, 70, 0.86);
+  padding: 0.35rem 0.65rem;
+  color: #fff7e1;
+  font-size: 0.72rem;
+  font-weight: 700;
+  box-shadow: 0 10px 22px rgba(14, 30, 43, 0.18);
+}
+
+.world-hotspot:hover .world-hotspot-ring,
+.world-hotspot:focus-visible .world-hotspot-ring {
+  transform: scale(1.06);
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.world-glow-orb {
+  width: 340px;
+  height: 340px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(255, 229, 160, 0.42), transparent 68%);
+  filter: blur(8px);
+  animation: world-orb-float 10s ease-in-out infinite;
+}
+
+.world-glow-orb-delayed {
+  animation-delay: -5s;
 }
 
 .world-smoke {
@@ -61,10 +193,20 @@ body {
   animation: world-cloud-drift 9s linear infinite;
 }
 
+.world-cloud-two {
+  animation-duration: 13s;
+}
+
 .world-rain {
   background-image: linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.35) 100%);
   background-size: 2px 16px;
   animation: world-rain-fall 0.7s linear infinite;
+}
+
+.world-water-glint {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.42), transparent);
+  transform: skewX(-24deg);
+  animation: world-water-shimmer 3.2s ease-in-out infinite;
 }
 
 @keyframes world-smoke-rise {
@@ -93,7 +235,7 @@ body {
     transform: translateX(0);
   }
   100% {
-    transform: translateX(24px);
+    transform: translateX(30px);
   }
 }
 
@@ -103,6 +245,38 @@ body {
   }
   100% {
     background-position: 0 16px;
+  }
+}
+
+@keyframes world-hotspot-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 248, 220, 0.12);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(255, 248, 220, 0);
+  }
+}
+
+@keyframes world-water-shimmer {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: skewX(-24deg) translateX(-8px);
+  }
+  50% {
+    opacity: 0.44;
+    transform: skewX(-24deg) translateX(12px);
+  }
+}
+
+@keyframes world-orb-float {
+  0%,
+  100% {
+    transform: translateY(0) translateX(0);
+  }
+  50% {
+    transform: translateY(18px) translateX(16px);
   }
 }
 

@@ -1,5 +1,5 @@
 import { Invoice, LineAmountTypes, Phone } from "xero-node";
-import { createXeroClient, getCliAuthenticatedXeroClient } from "@/lib/xero";
+import { createXeroClient, getAuthenticatedXeroClient, getCliAuthenticatedXeroClient } from "@/lib/xero";
 import { isDemoTagged } from "@/lib/world-tags";
 
 type SeedContact = {
@@ -111,6 +111,9 @@ export const DEMO_INVOICES: SeedInvoice[] = [
   },
 ];
 
+type ActiveSession = Awaited<ReturnType<typeof getCliAuthenticatedXeroClient>>;
+type BrowserCookieStore = Parameters<typeof getAuthenticatedXeroClient>[0];
+
 async function getAccountCodes(xero: Awaited<ReturnType<typeof createXeroClient>>, tenantId: string) {
   const response = await xero.accountingApi.getAccounts(tenantId);
   const accounts = response.body.accounts ?? [];
@@ -219,8 +222,7 @@ async function markInvoicePaid(
   });
 }
 
-export async function resetDemoData() {
-  const session = await getCliAuthenticatedXeroClient();
+async function resetDemoDataForSession(session: ActiveSession) {
   const { xero, tenantId } = session;
 
   const [receivables, payables] = await Promise.all([
@@ -252,8 +254,7 @@ export async function resetDemoData() {
   return candidates.length;
 }
 
-export async function seedDemoData() {
-  const session = await getCliAuthenticatedXeroClient();
+async function seedDemoDataForSession(session: ActiveSession) {
   const { xero, tenantId } = session;
   const { revenue, expense } = await getAccountCodes(xero, tenantId);
   const contacts = await ensureContacts(xero, tenantId, DEMO_CONTACTS);
@@ -284,4 +285,34 @@ export async function seedDemoData() {
   }
 
   return created;
+}
+
+export async function resetDemoData() {
+  const session = await getCliAuthenticatedXeroClient();
+  return resetDemoDataForSession(session);
+}
+
+export async function seedDemoData() {
+  const session = await getCliAuthenticatedXeroClient();
+  return seedDemoDataForSession(session);
+}
+
+export async function resetBrowserDemoData(cookieStore: BrowserCookieStore) {
+  const session = await getAuthenticatedXeroClient(cookieStore);
+
+  if (!session) {
+    throw new Error("Connect Xero first.");
+  }
+
+  return resetDemoDataForSession(session);
+}
+
+export async function seedBrowserDemoData(cookieStore: BrowserCookieStore) {
+  const session = await getAuthenticatedXeroClient(cookieStore);
+
+  if (!session) {
+    throw new Error("Connect Xero first.");
+  }
+
+  return seedDemoDataForSession(session);
 }
