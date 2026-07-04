@@ -131,12 +131,14 @@ export function XeroDashboard() {
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-3">
-              <Button asChild variant={'secondary'}>
-                <a href="/api/xero/connect">
-                  Connect Xero
-                  <ArrowRight className="size-4" />
-                </a>
-              </Button>
+              {!connected ? (
+                <Button asChild variant={'secondary'}>
+                  <a href="/api/xero/connect">
+                    Connect Xero
+                    <ArrowRight className="size-4" />
+                  </a>
+                </Button>
+              ) : null}
               {connected ? (
                 <Button variant="secondary" onClick={handleDisconnect} disabled={disconnecting}>
                   {disconnecting ? <LoaderCircle className="size-4 animate-spin" /> : <Unplug className="size-4" />}
