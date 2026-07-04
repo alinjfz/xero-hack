@@ -1,0 +1,41 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+:root {
+  --background: #0a0e18;
+  --foreground: #f4efe6;
+  --foreground-soft: #ddd2be;
+  --muted-foreground: #a5a8b8;
+  --panel: rgba(18, 25, 40, 0.82);
+  --border: rgba(255, 255, 255, 0.12);
+  --accent: #f8b84e;
+  --accent-foreground: #fff2ce;
+  --ring: rgba(248, 184, 78, 0.55);
+  --font-sans: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top, rgba(76, 125, 255, 0.08), transparent 30%),
+    linear-gradient(180deg, #0c1120 0%, #0a0e18 100%);
+  font-family: var(--font-sans);
+  color: var(--foreground);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
