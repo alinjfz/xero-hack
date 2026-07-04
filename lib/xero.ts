@@ -30,7 +30,7 @@ export function getXeroConfig() {
   const clientSecret = process.env.XERO_CLIENT_SECRET;
   const redirectUri = process.env.XERO_REDIRECT_URI;
   const scopes = (process.env.XERO_SCOPES ??
-    "offline_access accounting.settings.read accounting.invoices.read")
+    "offline_access accounting.settings.read accounting.contacts accounting.contacts.read accounting.invoices accounting.invoices.read accounting.payments accounting.payments.read accounting.reports.banksummary.read")
     .split(" ")
     .filter(Boolean);
 
@@ -146,5 +146,28 @@ export async function getAuthenticatedXeroClient(cookieStore: CookieStore) {
     tokenSet: currentTokenSet,
     tenantId,
     tenantName,
+  };
+}
+
+export async function getCliAuthenticatedXeroClient() {
+  const refreshToken = process.env.XERO_REFRESH_TOKEN?.trim();
+  const tenantId = process.env.XERO_TENANT_ID?.trim();
+
+  if (!refreshToken || !tenantId) {
+    throw new Error("Set XERO_REFRESH_TOKEN and XERO_TENANT_ID in .env.local for CLI commands.");
+  }
+
+  const xero = await createXeroClient();
+  xero.setTokenSet({
+    refresh_token: refreshToken,
+  });
+
+  const tokenSet = (await xero.refreshToken()) as StoredTokenSet;
+
+  return {
+    xero,
+    tokenSet,
+    tenantId,
+    tenantName: "CLI tenant",
   };
 }

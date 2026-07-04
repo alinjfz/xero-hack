@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import {
   ArrowRight,
   Bot,
@@ -13,14 +13,13 @@ import {
   Unplug,
   Users2,
   Sliders,
-  DollarSign,
-  TrendingUp,
   Flame,
-  Activity,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ContractIntelligence } from "@/components/contract-intelligence";
+import { CliSeedSetup } from "@/components/cli-seed-setup";
 import { SummaryResponse } from "@/lib/xero-summary";
 
 function isConnectedSummary(summary: SummaryResponse | null): summary is Extract<SummaryResponse, { connected: true }> {
@@ -35,6 +34,15 @@ function formatCurrency(amount: number, currencyCode: string | null) {
   }).format(amount);
 }
 
+function getCustomerCostDefaults(amountDue: number, isOverdue: boolean) {
+  return {
+    supportHours: Math.min(50, Math.floor((amountDue / 12000) * 10) + 4),
+    extraRevisions: Math.min(10, Math.floor((amountDue / 20000) * 2) + 1),
+    subcontractorPercent: amountDue > 40000 ? 30 : 15,
+    paymentDelayDays: isOverdue ? 40 : 5,
+  };
+}
+
 export function XeroDashboard() {
   const [summary, setSummary] = useState<SummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,13 +52,6 @@ export function XeroDashboard() {
   const [briefLoading, setBriefLoading] = useState(false);
   const [briefError, setBriefError] = useState<string | null>(null);
 
-  // Profitability and Leakage parameters per customer name
-  const [customerCosts, setCustomerCosts] = useState<Record<string, {
-    supportHours: number;
-    extraRevisions: number;
-    subcontractorPercent: number;
-    paymentDelayDays: number;
-  }>>({});
   const [customerAiRecs, setCustomerAiRecs] = useState<Record<string, string>>({});
   const [loadingRecs, setLoadingRecs] = useState<Record<string, boolean>>({});
 
@@ -81,24 +82,7 @@ export function XeroDashboard() {
     };
   }, []);
 
-  // Initialize profitability leakage defaults based on Xero data
-  useEffect(() => {
-    if (summary && isConnectedSummary(summary)) {
-      const initialCosts: typeof customerCosts = {};
-      summary.customers.forEach((customer) => {
-        const isOverdue = customer.overdueCount > 0;
-        initialCosts[customer.name] = {
-          supportHours: Math.min(50, Math.floor((customer.amountDue / 12000) * 10) + 4),
-          extraRevisions: Math.min(10, Math.floor((customer.amountDue / 20000) * 2) + 1),
-          subcontractorPercent: customer.amountDue > 40000 ? 30 : 15,
-          paymentDelayDays: isOverdue ? 40 : 5,
-        };
-      });
-      setCustomerCosts((prev) => ({ ...initialCosts, ...prev }));
-    }
-  }, [summary]);
-
-  async function handleGenerateBrief(metricsKey?: string) {
+  const generateBrief = useEffectEvent(async (metricsKey?: string) => {
     setBriefLoading(true);
     setBriefError(null);
 
@@ -130,7 +114,7 @@ export function XeroDashboard() {
     } finally {
       setBriefLoading(false);
     }
-  }
+  });
 
   // Automate generating or loading cached briefs
   useEffect(() => {
@@ -150,10 +134,18 @@ export function XeroDashboard() {
     const cachedModel = localStorage.getItem("kish_brief_model_key");
 
     if (cachedMetrics === stateKey && cachedBrief) {
-      setBrief(cachedBrief);
-      setBriefModel(cachedModel);
+      const timeoutId = window.setTimeout(() => {
+        setBrief(cachedBrief);
+        setBriefModel(cachedModel);
+      }, 0);
+
+      return () => window.clearTimeout(timeoutId);
     } else {
-      handleGenerateBrief(stateKey);
+      const timeoutId = window.setTimeout(() => {
+        void generateBrief(stateKey);
+      }, 0);
+
+      return () => window.clearTimeout(timeoutId);
     }
   }, [loading, summary]);
 
@@ -180,13 +172,16 @@ export function XeroDashboard() {
     }
   }
 
-  async function handleGenerateProfitabilityRec(customerName: string, revenue: number) {
-    const costs = customerCosts[customerName] || {
-      supportHours: 8,
-      extraRevisions: 2,
-      subcontractorPercent: 20,
-      paymentDelayDays: 10,
-    };
+  const generateProfitabilityRec = useEffectEvent(async (customerName: string, revenue: number) => {
+    const customer = connected ? summary.customers.find((entry) => entry.name === customerName) : null;
+    const costs = customer
+      ? getCustomerCostDefaults(customer.amountDue, customer.overdueCount > 0)
+      : {
+          supportHours: 8,
+          extraRevisions: 2,
+          subcontractorPercent: 20,
+          paymentDelayDays: 10,
+        };
 
     const supportCost = costs.supportHours * 50;
     const revisionCost = costs.extraRevisions * 200;
@@ -226,21 +221,18 @@ export function XeroDashboard() {
     } finally {
       setLoadingRecs((prev) => ({ ...prev, [customerName]: false }));
     }
-  }
+  });
 
   const connected = isConnectedSummary(summary);
   const currencyCode = connected ? summary.organisation.baseCurrency : null;
 
   // Find customers with leakage (true margin < 25%)
-  const leakingCustomers = connected
-    ? summary.customers.map((customer) => {
+  const leakingCustomers = useMemo(
+    () =>
+      connected
+        ? summary.customers.map((customer) => {
         const isOverdue = customer.overdueCount > 0;
-        const costs = customerCosts[customer.name] || {
-          supportHours: Math.min(50, Math.floor((customer.amountDue / 12000) * 10) + 4),
-          extraRevisions: Math.min(10, Math.floor((customer.amountDue / 20000) * 2) + 1),
-          subcontractorPercent: customer.amountDue > 40000 ? 30 : 15,
-          paymentDelayDays: isOverdue ? 40 : 5,
-        };
+        const costs = getCustomerCostDefaults(customer.amountDue, isOverdue);
 
         const supportCost = costs.supportHours * 50;
         const revisionCost = costs.extraRevisions * 200;
@@ -266,7 +258,9 @@ export function XeroDashboard() {
           primaryCulprit: breakdown[0]?.name ?? "Operating overhead",
         };
       }).filter((c) => c.margin < 25)
-    : [];
+        : [],
+    [connected, summary],
+  );
 
   // Auto-trigger AI advice for leaking customers at top-level (complying with Rules of Hooks)
   useEffect(() => {
@@ -276,10 +270,10 @@ export function XeroDashboard() {
 
     leakingCustomers.forEach((c) => {
       if (!customerAiRecs[c.name] && !loadingRecs[c.name]) {
-        handleGenerateProfitabilityRec(c.name, c.revenue);
+        generateProfitabilityRec(c.name, c.revenue);
       }
     });
-  }, [connected, summary, leakingCustomers, customerAiRecs, loadingRecs]);
+  }, [connected, customerAiRecs, leakingCustomers, loadingRecs, summary]);
 
   return (
     <div className="space-y-8">
@@ -308,6 +302,14 @@ export function XeroDashboard() {
                 </Button>
               ) : null}
               {connected ? (
+                <Button asChild variant="default">
+                  <a href="/world">
+                    Enter your world
+                    <Sparkles className="size-4" />
+                  </a>
+                </Button>
+              ) : null}
+              {connected ? (
                 <Button variant="secondary" onClick={handleDisconnect} disabled={disconnecting}>
                   {disconnecting ? <LoaderCircle className="size-4 animate-spin" /> : <Unplug className="size-4" />}
                   Disconnect
@@ -330,6 +332,11 @@ export function XeroDashboard() {
               icon={Sparkles}
               title="Profit leakage radar"
               body="Identify which clients are costing you the most in hidden support, revisions, and payment delays."
+            />
+            <Feature
+              icon={Sliders}
+              title="Contract intelligence"
+              body="Extract terms from real agreements and compare them to live Xero invoices, bills, and renewal timing."
             />
           </CardContent>
         </Card>
@@ -386,6 +393,9 @@ export function XeroDashboard() {
 
       {connected ? (
         <>
+          <CliSeedSetup />
+          <ContractIntelligence summary={summary} />
+
           <section className="grid gap-6 lg:grid-cols-[1fr_1fr]">
             <Card>
               <CardHeader>
@@ -550,6 +560,17 @@ export function XeroDashboard() {
                     <EmptyState copy="No overdue invoices right now." />
                   )}
                 </div>
+
+                <div className="grid gap-3">
+                  <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--muted-foreground)]">Supplier bills awaiting payment</p>
+                  {summary.invoices.bills.length > 0 ? (
+                    summary.invoices.bills.slice(0, 5).map((invoice) => (
+                      <InvoiceRow key={invoice.invoiceId} invoice={invoice} currencyCode={currencyCode} />
+                    ))
+                  ) : (
+                    <EmptyState copy="No open supplier bills are showing right now." />
+                  )}
+                </div>
               </CardContent>
             </Card>
 
@@ -690,4 +711,3 @@ function InvoiceRow({
 function EmptyState({ copy }: { copy: string }) {
   return <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-5 text-sm leading-6 text-[color:var(--muted-foreground)]">{copy}</div>;
 }
-

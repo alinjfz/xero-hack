@@ -35,6 +35,77 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+.world-theme {
+  --world-ink: #2f2418;
+  --world-muted: #6f5d4a;
+  --world-panel: #f8edd8;
+  --world-card: #fff8ea;
+  --world-border: #d8c3a2;
+  --world-accent: #c45c26;
+  background:
+    radial-gradient(circle at top, rgba(255, 214, 165, 0.35), transparent 28%),
+    linear-gradient(180deg, #f3e2c4 0%, #e8d3b2 100%);
+  color: var(--world-ink);
+}
+
+.world-smoke {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), transparent);
+  animation: world-smoke-rise 2.8s ease-in-out infinite;
+}
+
+.world-sign {
+  animation: world-sign-flicker 2.2s ease-in-out infinite;
+}
+
+.world-cloud {
+  animation: world-cloud-drift 9s linear infinite;
+}
+
+.world-rain {
+  background-image: linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.35) 100%);
+  background-size: 2px 16px;
+  animation: world-rain-fall 0.7s linear infinite;
+}
+
+@keyframes world-smoke-rise {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateY(-14px) scale(1.2);
+    opacity: 0;
+  }
+}
+
+@keyframes world-sign-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+@keyframes world-cloud-drift {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(24px);
+  }
+}
+
+@keyframes world-rain-fall {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 16px;
+  }
+}
+
 a {
   color: inherit;
   text-decoration: none;

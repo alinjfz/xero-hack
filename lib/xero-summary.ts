@@ -1,3 +1,4 @@
+import { type XeroClient } from "xero-node";
 import { clearXeroSession, getAuthenticatedXeroClient, getXeroConfig } from "@/lib/xero";
 import { getOpenRouterConfig } from "@/lib/openrouter";
 
@@ -39,12 +40,22 @@ type CustomerSnapshot = {
   overdueCount: number;
 };
 
-type InvoiceSnapshot = {
+type SupplierSnapshot = {
+  name: string;
+  amountDue: number;
+  billCount: number;
+  overdueCount: number;
+};
+
+export type InvoiceSnapshot = {
   invoiceId: string;
   invoiceNumber: string;
   contactName: string;
+  reference: string | null;
   amountDue: number;
   total: number;
+  currency: string | null;
+  issueDate: string | null;
   dueDate: string | null;
   status: string;
   isOverdue: boolean;
@@ -87,6 +98,7 @@ export type SummaryResponse =
       metrics: {
         accounts: number;
         bankAccounts: number;
+        bankBalance: number | null;
         draftInvoices: number;
         awaitingPayment: number;
         overdue: number;
@@ -95,13 +107,19 @@ export type SummaryResponse =
         dueSoonAmount: number;
         averageInvoiceValue: number;
       };
+      invoices: {
+        allReceivables: InvoiceSnapshot[];
+        allPayables: InvoiceSnapshot[];
+        awaitingPayment: InvoiceSnapshot[];
+        overdue: InvoiceSnapshot[];
+        dueSoon: InvoiceSnapshot[];
+        bills: InvoiceSnapshot[];
+        drafts: InvoiceSnapshot[];
+      };
       insights: Insight[];
       agents: AgentSuggestion[];
       customers: CustomerSnapshot[];
-      invoices: {
-        overdue: InvoiceSnapshot[];
-        dueSoon: InvoiceSnapshot[];
-      };
+      suppliers: SupplierSnapshot[];
       openRouter: {
         configured: boolean;
         model: string | null;
@@ -111,10 +129,13 @@ export type SummaryResponse =
 type InvoiceSummary = {
   invoiceID?: string;
   invoiceNumber?: string;
+  reference?: string;
   status?: string;
   type?: string;
   total?: number;
   amountDue?: number;
+  currencyCode?: string;
+  dateString?: string;
   dueDateString?: string;
   contact?: {
     name?: string;
@@ -152,8 +173,11 @@ function normaliseInvoice(invoice: InvoiceSummary): InvoiceSnapshot {
     invoiceId: invoice.invoiceID ?? invoice.invoiceNumber ?? "unknown-invoice",
     invoiceNumber: invoice.invoiceNumber ?? "Unnumbered invoice",
     contactName: invoice.contact?.name ?? "Unknown contact",
+    reference: invoice.reference ?? null,
     amountDue: invoice.amountDue ?? 0,
     total: invoice.total ?? 0,
+    currency: invoice.currencyCode ? String(invoice.currencyCode) : null,
+    issueDate: invoice.dateString ?? null,
     dueDate,
     status: invoice.status ?? "UNKNOWN",
     isOverdue,
@@ -186,6 +210,33 @@ function buildCustomerSnapshots(invoices: InvoiceSnapshot[]) {
 
     existing.amountDue += invoice.amountDue;
     existing.invoiceCount += 1;
+    if (invoice.isOverdue) {
+      existing.overdueCount += 1;
+    }
+
+    grouped.set(invoice.contactName, existing);
+  }
+
+  return [...grouped.values()].sort((left, right) => right.amountDue - left.amountDue).slice(0, 5);
+}
+
+function buildSupplierSnapshots(invoices: InvoiceSnapshot[]) {
+  const grouped = new Map<string, SupplierSnapshot>();
+
+  for (const invoice of invoices) {
+    if (invoice.amountDue <= 0) {
+      continue;
+    }
+
+    const existing = grouped.get(invoice.contactName) ?? {
+      name: invoice.contactName,
+      amountDue: 0,
+      billCount: 0,
+      overdueCount: 0,
+    };
+
+    existing.amountDue += invoice.amountDue;
+    existing.billCount += 1;
     if (invoice.isOverdue) {
       existing.overdueCount += 1;
     }
@@ -352,6 +403,62 @@ function buildAgents(params: {
   return agents.slice(0, 4);
 }
 
+async function fetchAllInvoices(
+  api: AccountingInvoicesApi,
+  tenantId: string,
+  where: string,
+  order: string,
+) {
+  const invoices: InvoiceSummary[] = [];
+  let page = 1;
+
+  while (page <= 20) {
+    const response = await api.getInvoices(tenantId, undefined, where, order, undefined, undefined, page);
+    const batch = response.body.invoices ?? [];
+
+    if (batch.length === 0) {
+      break;
+    }
+
+    invoices.push(...batch);
+
+    if (batch.length < 100) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return invoices;
+}
+
+async function fetchBankBalance(xero: XeroClient, tenantId: string) {
+  try {
+    const date = new Date().toISOString().split("T")[0];
+    const response = await xero.accountingApi.getReportBankSummary(tenantId, date);
+    const rows = response.body.reports?.[0]?.rows ?? [];
+    let total = 0;
+
+    for (const row of rows) {
+      if (String(row.rowType) !== "Row") {
+        continue;
+      }
+
+      const cells = row.cells ?? [];
+      const balanceCell = cells[cells.length - 1]?.value;
+      const parsed = balanceCell ? Number.parseFloat(String(balanceCell).replace(/,/g, "")) : Number.NaN;
+
+      if (!Number.isNaN(parsed)) {
+        total += parsed;
+      }
+    }
+
+    return total > 0 ? total : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<SummaryResponse> {
   const config = getXeroConfig();
   const openRouter = getOpenRouterConfig();
@@ -377,26 +484,22 @@ export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<Summ
 
   try {
     const { xero, tenantId, tenantName } = session;
-    const [organisationsResponse, accountsResponse, invoicesResponse] = await Promise.all([
+    const invoicesApi = xero.accountingApi as AccountingInvoicesApi;
+    const [organisationsResponse, accountsResponse, receivableRaw, payableRaw, bankBalance] = await Promise.all([
       xero.accountingApi.getOrganisations(tenantId),
       xero.accountingApi.getAccounts(tenantId),
-      (xero.accountingApi as AccountingInvoicesApi).getInvoices(
-        tenantId,
-        undefined,
-        'Type=="ACCREC"',
-        "DueDate ASC",
-        undefined,
-        undefined,
-        1,
-      ),
+      fetchAllInvoices(invoicesApi, tenantId, 'Type=="ACCREC"', "DueDate ASC"),
+      fetchAllInvoices(invoicesApi, tenantId, 'Type=="ACCPAY"', "DueDate ASC"),
+      fetchBankBalance(xero, tenantId),
     ]);
 
     const organisation = organisationsResponse.body.organisations?.[0];
     const accounts = accountsResponse.body.accounts ?? [];
     const baseCurrency = organisation?.baseCurrency ? String(organisation.baseCurrency) : null;
-    const invoices = (invoicesResponse.body.invoices ?? []).map(normaliseInvoice);
-    const draftInvoices = invoices.filter((invoice) => invoice.status === "DRAFT");
-    const awaitingPayment = invoices.filter((invoice) => invoice.status === "AUTHORISED" && invoice.amountDue > 0);
+    const receivableInvoices = receivableRaw.map(normaliseInvoice);
+    const payableInvoices = payableRaw.map(normaliseInvoice);
+    const draftInvoices = receivableInvoices.filter((invoice) => invoice.status === "DRAFT");
+    const awaitingPayment = receivableInvoices.filter((invoice) => invoice.status === "AUTHORISED" && invoice.amountDue > 0);
     const overdueInvoices = awaitingPayment.filter((invoice) => invoice.isOverdue).sort((left, right) => right.amountDue - left.amountDue);
     const dueSoonInvoices = awaitingPayment
       .filter((invoice) => {
@@ -409,7 +512,11 @@ export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<Summ
         return diffDays >= 0 && diffDays <= 7;
       })
       .sort((left, right) => left.amountDue - right.amountDue);
+    const awaitingBills = payableInvoices
+      .filter((invoice) => invoice.status === "AUTHORISED" && invoice.amountDue > 0)
+      .sort((left, right) => right.amountDue - left.amountDue);
     const customerSnapshots = buildCustomerSnapshots(awaitingPayment);
+    const supplierSnapshots = buildSupplierSnapshots(awaitingBills);
     const receivablesAmount = awaitingPayment.reduce((sum, invoice) => sum + invoice.amountDue, 0);
     const overdueAmount = overdueInvoices.reduce((sum, invoice) => sum + invoice.amountDue, 0);
     const dueSoonAmount = dueSoonInvoices.reduce((sum, invoice) => sum + invoice.amountDue, 0);
@@ -447,6 +554,7 @@ export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<Summ
       metrics: {
         accounts: accounts.length,
         bankAccounts: accounts.filter((account) => String(account.type) === "BANK").length,
+        bankBalance,
         draftInvoices: draftInvoices.length,
         awaitingPayment: awaitingPayment.length,
         overdue: overdueInvoices.length,
@@ -458,9 +566,15 @@ export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<Summ
       insights,
       agents,
       customers: customerSnapshots,
+      suppliers: supplierSnapshots,
       invoices: {
+        allReceivables: receivableInvoices,
+        allPayables: payableInvoices,
+        awaitingPayment: awaitingPayment.slice(0, 25),
         overdue: overdueInvoices.slice(0, 5),
         dueSoon: dueSoonInvoices.slice(0, 5),
+        bills: awaitingBills.slice(0, 25),
+        drafts: draftInvoices,
       },
       openRouter,
     };
