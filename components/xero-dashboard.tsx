@@ -131,7 +131,7 @@ export function XeroDashboard() {
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-3">
-              <Button asChild>
+              <Button asChild variant={'secondary'}>
                 <a href="/api/xero/connect">
                   Connect Xero
                   <ArrowRight className="size-4" />

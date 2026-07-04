@@ -30,7 +30,7 @@ export function getXeroConfig() {
   const clientSecret = process.env.XERO_CLIENT_SECRET;
   const redirectUri = process.env.XERO_REDIRECT_URI;
   const scopes = (process.env.XERO_SCOPES ??
-    "openid profile email accounting.settings accounting.transactions offline_access")
+    "offline_access accounting.settings.read accounting.invoices.read")
     .split(" ")
     .filter(Boolean);
 
