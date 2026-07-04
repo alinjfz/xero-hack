@@ -43,6 +43,7 @@ export function XeroDashboard() {
   const [briefModel, setBriefModel] = useState<string | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
   const [briefError, setBriefError] = useState<string | null>(null);
+  const [showDemoLeakage, setShowDemoLeakage] = useState(false);
 
   // Profitability and Leakage parameters per customer name
   const [customerCosts, setCustomerCosts] = useState<Record<string, {
@@ -232,7 +233,7 @@ export function XeroDashboard() {
   const currencyCode = connected ? summary.organisation.baseCurrency : null;
 
   // Find customers with leakage (true margin < 25%)
-  const leakingCustomers = connected
+  const realLeakingCustomers = connected
     ? summary.customers.map((customer) => {
         const isOverdue = customer.overdueCount > 0;
         const costs = customerCosts[customer.name] || {
@@ -264,9 +265,33 @@ export function XeroDashboard() {
           trueProfit,
           margin,
           primaryCulprit: breakdown[0]?.name ?? "Operating overhead",
+          isDemo: false,
         };
       }).filter((c) => c.margin < 25)
     : [];
+
+  const demoLeakingCustomers = [
+    {
+      name: "Acme Corp (Demo)",
+      revenue: 220000,
+      trueProfit: 11000,
+      margin: 5,
+      primaryCulprit: "Support overhead",
+      isDemo: true,
+    },
+    {
+      name: "Globex Industries (Demo)",
+      revenue: 85000,
+      trueProfit: 15000,
+      margin: 17.6,
+      primaryCulprit: "Subcontractors",
+      isDemo: true,
+    }
+  ];
+
+  const leakingCustomers = showDemoLeakage
+    ? [...realLeakingCustomers, ...demoLeakingCustomers]
+    : realLeakingCustomers;
 
   // Auto-trigger AI advice for leaking customers at top-level (complying with Rules of Hooks)
   useEffect(() => {
@@ -313,6 +338,14 @@ export function XeroDashboard() {
                   Disconnect
                 </Button>
               ) : null}
+              <Button
+                variant="outline"
+                onClick={() => setShowDemoLeakage(!showDemoLeakage)}
+                className={showDemoLeakage ? "border-rose-500/50 text-rose-400 bg-rose-500/10 hover:bg-rose-500/15" : ""}
+              >
+                <Flame className="size-4 mr-1 text-rose-400" />
+                {showDemoLeakage ? "Hide Demo Leakage" : "Demo Profit Leakage"}
+              </Button>
             </div>
           </CardHeader>
           <CardContent className="grid gap-4 px-8 pb-8 sm:grid-cols-3">
@@ -383,6 +416,87 @@ export function XeroDashboard() {
           </CardContent>
         </Card>
       </section>
+      {leakingCustomers.length > 0 ? (
+        <section className="grid gap-6">
+          <Card className="border border-rose-500/20 bg-[radial-gradient(circle_at_top_right,rgba(244,63,94,0.06),transparent_40%)] p-6 md:p-8">
+            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Badge variant="default" className="bg-rose-500/15 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20">
+                    Profit Leakage Alert
+                  </Badge>
+                  <span className="text-xs text-[color:var(--muted-foreground)] flex items-center gap-1">
+                    <Flame className="size-3.5 text-rose-400 animate-pulse" /> Live operational bleed detected
+                  </span>
+                </div>
+                <CardTitle className="text-2xl font-[family-name:var(--font-display)]">
+                  Why you are losing money on top accounts
+                </CardTitle>
+                <CardDescription className="max-w-2xl text-sm text-[color:var(--foreground-soft)]">
+                  KISH analyzed your active service delivery metrics against raw Xero contracts. Some top customers are underperforming due to unbilled revisions, subcontractor creep, or support delays.
+                </CardDescription>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {leakingCustomers.map((c) => (
+                <div
+                  key={c.name}
+                  className="rounded-2xl border border-white/5 bg-white/[0.01] p-5 space-y-4"
+                >
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h4 className="font-semibold text-white text-base">{c.name}</h4>
+                      <p className="text-xs text-[color:var(--muted-foreground)] mt-0.5">
+                        Revenue: {formatCurrency(c.revenue, currencyCode)}
+                      </p>
+                    </div>
+                    <Badge variant="subtle" className="bg-rose-500/10 text-rose-300">
+                      {c.margin.toFixed(0)}% Margin
+                    </Badge>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[color:var(--muted-foreground)]">True Profit:</span>
+                      <span className="text-rose-300 font-semibold">{formatCurrency(c.trueProfit, currencyCode)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[color:var(--muted-foreground)]">Primary Bleed:</span>
+                      <span className="text-white font-medium">{c.primaryCulprit}</span>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-white/5 pt-3">
+                    {c.isDemo ? (
+                      <div className="text-xs text-[color:var(--foreground-soft)] bg-amber-500/5 rounded-xl border border-amber-500/10 p-3 leading-relaxed">
+                        <span className="font-bold text-amber-400 block mb-1">AI Recommendation</span>
+                        {c.name === "Acme Corp (Demo)"
+                          ? "Support costs have eaten 95% of your margin due to 120+ unbilled hours. Action: Transition to a retained support tier of £75/hr for hours exceeding 15/month, or raise core pricing by 15% immediately."
+                          : "Subcontractor margins are currently set to 30%, which is too high for Globex's volume. Action: Bring core deliverables in-house or renegotiate subcontractor rates down to a 15% cap."}
+                      </div>
+                    ) : loadingRecs[c.name] ? (
+                      <div className="flex items-center gap-2 text-xs text-[color:var(--muted-foreground)] py-1">
+                        <LoaderCircle className="size-3.5 animate-spin text-amber-400" />
+                        AI compiling optimization guide...
+                      </div>
+                    ) : customerAiRecs[c.name] ? (
+                      <div className="text-xs text-[color:var(--foreground-soft)] bg-amber-500/5 rounded-xl border border-amber-500/10 p-3 leading-relaxed">
+                        <span className="font-bold text-amber-400 block mb-1">AI Recommendation</span>
+                        {customerAiRecs[c.name]}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-[color:var(--muted-foreground)] py-1">
+                        AI Briefing pending OpenRouter connection.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </section>
+      ) : null}
 
       {connected ? (
         <>
@@ -435,82 +549,6 @@ export function XeroDashboard() {
               </CardContent>
             </Card>
           </section>
-
-          {/* Minimal Profit Leakage Insight Card (Only visible if leakage is detected) */}
-          {leakingCustomers.length > 0 ? (
-            <section className="grid gap-6">
-              <Card className="border border-rose-500/20 bg-[radial-gradient(circle_at_top_right,rgba(244,63,94,0.06),transparent_40%)] p-6 md:p-8">
-                <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="default" className="bg-rose-500/15 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20">
-                        Profit Leakage Alert
-                      </Badge>
-                      <span className="text-xs text-[color:var(--muted-foreground)] flex items-center gap-1">
-                        <Flame className="size-3.5 text-rose-400 animate-pulse" /> Live operational bleed detected
-                      </span>
-                    </div>
-                    <CardTitle className="text-2xl font-[family-name:var(--font-display)]">
-                      Why you are losing money on top accounts
-                    </CardTitle>
-                    <CardDescription className="max-w-2xl text-sm text-[color:var(--foreground-soft)]">
-                      KISH analyzed your active service delivery metrics against raw Xero contracts. Some top customers are underperforming due to unbilled revisions, subcontractor creep, or support delays.
-                    </CardDescription>
-                  </div>
-                </div>
-
-                <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {leakingCustomers.map((c) => (
-                    <div
-                      key={c.name}
-                      className="rounded-2xl border border-white/5 bg-white/[0.01] p-5 space-y-4"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <h4 className="font-semibold text-white text-base">{c.name}</h4>
-                          <p className="text-xs text-[color:var(--muted-foreground)] mt-0.5">
-                            Revenue: {formatCurrency(c.revenue, currencyCode)}
-                          </p>
-                        </div>
-                        <Badge variant="subtle" className="bg-rose-500/10 text-rose-300">
-                          {c.margin.toFixed(0)}% Margin
-                        </Badge>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-[color:var(--muted-foreground)]">True Profit:</span>
-                          <span className="text-rose-300 font-semibold">{formatCurrency(c.trueProfit, currencyCode)}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-[color:var(--muted-foreground)]">Primary Bleed:</span>
-                          <span className="text-white font-medium">{c.primaryCulprit}</span>
-                        </div>
-                      </div>
-
-                      <div className="border-t border-white/5 pt-3">
-                        {loadingRecs[c.name] ? (
-                          <div className="flex items-center gap-2 text-xs text-[color:var(--muted-foreground)] py-1">
-                            <LoaderCircle className="size-3.5 animate-spin text-amber-400" />
-                            AI compiling optimization guide...
-                          </div>
-                        ) : customerAiRecs[c.name] ? (
-                          <div className="text-xs text-[color:var(--foreground-soft)] bg-amber-500/5 rounded-xl border border-amber-500/10 p-3 leading-relaxed">
-                            <span className="font-bold text-amber-400 block mb-1">AI Recommendation</span>
-                            {customerAiRecs[c.name]}
-                          </div>
-                        ) : (
-                          <div className="text-xs text-[color:var(--muted-foreground)] py-1">
-                            AI Briefing pending OpenRouter connection.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            </section>
-          ) : null}
 
           <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
             <Card>
