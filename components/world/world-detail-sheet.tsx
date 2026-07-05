@@ -8,6 +8,7 @@ import type { WorldId } from "@/lib/world-tags";
 import { Button } from "@/components/ui/button";
 
 export type DetailPanel = {
+  target: string;
   worldId: WorldId;
   hotspot: string;
   title: string;
@@ -19,6 +20,10 @@ export type DetailPanel = {
 type Props = {
   panel: DetailPanel | null;
   onClose: () => void;
+  getInvoicePrimaryLabel: (invoice: InvoiceSnapshot, panel: DetailPanel) => string;
+  onInvoicePrimaryAction: (invoice: InvoiceSnapshot, panel: DetailPanel) => void;
+  onOpenTask: (invoice: InvoiceSnapshot, panel: DetailPanel) => void;
+  actionLoadingInvoiceId?: string | null;
 };
 
 function plainLabel(invoice: InvoiceSnapshot, worldId: WorldId) {
@@ -53,7 +58,14 @@ function groupInvoices(invoices: InvoiceSnapshot[]) {
   ].filter((group) => group.items.length > 0);
 }
 
-export function WorldDetailSheet({ panel, onClose }: Props) {
+export function WorldDetailSheet({
+  panel,
+  onClose,
+  getInvoicePrimaryLabel,
+  onInvoicePrimaryAction,
+  onOpenTask,
+  actionLoadingInvoiceId,
+}: Props) {
   return (
     <AnimatePresence>
       {panel ? (
@@ -68,7 +80,7 @@ export function WorldDetailSheet({ panel, onClose }: Props) {
             onClick={onClose}
           />
           <motion.div
-            className="fixed inset-x-0 bottom-0 z-50 mx-auto max-h-[78vh] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-[color:var(--world-border)] bg-[color:var(--world-panel)] shadow-2xl"
+            className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[78vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-[color:var(--world-border)] bg-[color:var(--world-panel)] shadow-2xl"
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
@@ -84,7 +96,7 @@ export function WorldDetailSheet({ panel, onClose }: Props) {
                 <X className="size-4" />
               </Button>
             </div>
-            <div className="space-y-6 overflow-y-auto px-6 py-5">
+            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-5">
               {panel.invoices.length === 0 ? (
                 <p className="text-sm text-[color:var(--world-muted)]">Nothing to show here yet. Load starter records or connect a tenant with active data.</p>
               ) : (
@@ -110,6 +122,23 @@ export function WorldDetailSheet({ panel, onClose }: Props) {
                             <p className="text-sm font-semibold text-[color:var(--world-accent)]">
                               {formatCurrency(invoice.amountDue || invoice.total, panel.currency)}
                             </p>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => onInvoicePrimaryAction(invoice, panel)}
+                              disabled={actionLoadingInvoiceId === invoice.invoiceId}
+                              className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] disabled:opacity-55"
+                            >
+                              {actionLoadingInvoiceId === invoice.invoiceId ? "Working..." : getInvoicePrimaryLabel(invoice, panel)}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onOpenTask(invoice, panel)}
+                              className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-panel)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card-strong)]"
+                            >
+                              Open task
+                            </button>
                           </div>
                         </li>
                       ))}

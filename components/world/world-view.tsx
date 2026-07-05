@@ -54,6 +54,7 @@ type SceneHotspot = {
 
 type WorldTask = {
   id: string;
+  invoiceId?: string;
   title: string;
   detail: string;
   location: SceneId;
@@ -239,6 +240,7 @@ function buildPanel(
 
   const panels: Record<PanelTarget, DetailPanel> = {
     mailbox: {
+      target: "mailbox",
       worldId: "home",
       hotspot: "Mailbox",
       title: "Due soon and overdue",
@@ -247,6 +249,7 @@ function buildPanel(
       currency,
     },
     "home-rent": {
+      target: "home-rent",
       worldId: "home",
       hotspot: "Rent ledger",
       title: "Rent status",
@@ -255,6 +258,7 @@ function buildPanel(
       currency,
     },
     "home-bills": {
+      target: "home-bills",
       worldId: "home",
       hotspot: "Bills cabinet",
       title: "Property bills",
@@ -263,6 +267,7 @@ function buildPanel(
       currency,
     },
     "biz-receivables": {
+      target: "biz-receivables",
       worldId: "biz",
       hotspot: "Invoice counter",
       title: "Open receivables",
@@ -271,6 +276,7 @@ function buildPanel(
       currency,
     },
     "biz-drafts": {
+      target: "biz-drafts",
       worldId: "biz",
       hotspot: "Draft board",
       title: "Draft invoices",
@@ -279,6 +285,7 @@ function buildPanel(
       currency,
     },
     "biz-bills": {
+      target: "biz-bills",
       worldId: "biz",
       hotspot: "Supplier shelf",
       title: "Supplier bills",
@@ -287,6 +294,7 @@ function buildPanel(
       currency,
     },
     "biz-revenue": {
+      target: "biz-revenue",
       worldId: "biz",
       hotspot: "Revenue board",
       title: "Revenue this month",
@@ -409,6 +417,7 @@ function buildGoalTasks(params: {
       rentDraft
         ? {
             id: `goal-action-${rentDraft.invoiceId}`,
+            invoiceId: rentDraft.invoiceId,
             title: "Send the next rent draft",
             detail: `${rentDraft.invoiceNumber} is ready to send for ${formatCurrency(rentDraft.amountDue, params.currency)}.`,
             location: "home",
@@ -431,6 +440,7 @@ function buildGoalTasks(params: {
       rentFollowup
         ? {
             id: `goal-action-${rentFollowup.invoiceId}`,
+            invoiceId: rentFollowup.invoiceId,
             title: "Chase rent before it slips further",
             detail: `${rentFollowup.invoiceNumber} is overdue for ${formatCurrency(rentFollowup.amountDue, params.currency)} and needs a tailored follow-up.`,
             location: "home",
@@ -458,6 +468,7 @@ function buildGoalTasks(params: {
   if (params.goalType === "zero_overdue") {
     return params.board.overdueChase.slice(0, 2).map((item) => ({
       id: `goal-action-${item.invoiceId}`,
+      invoiceId: item.invoiceId,
       title: `Clear ${item.invoiceNumber}`,
       detail: `${item.contactName} owes ${formatCurrency(item.amountDue, params.currency)} and is ${item.daysOverdue} days late.`,
       location: sceneIdForWorld(item.worldId),
@@ -480,6 +491,7 @@ function buildGoalTasks(params: {
   if (params.goalType === "revenue_target") {
     return params.board.invoiceAssistant.slice(0, 2).map((item) => ({
       id: `goal-action-${item.invoiceId}`,
+      invoiceId: item.invoiceId,
       title: `Turn ${item.invoiceNumber} into live revenue`,
       detail: `Draft value ${formatCurrency(item.amountDue, params.currency)}. Check hygiene and send.`,
       location: sceneIdForWorld(item.worldId),
@@ -502,6 +514,7 @@ function buildGoalTasks(params: {
   if (params.goalType === "cash_buffer") {
     return params.board.supplierBills.slice(0, 2).map((item) => ({
       id: `goal-action-${item.invoiceId}`,
+      invoiceId: item.invoiceId,
       title: `Review ${item.invoiceNumber} before cash leaves`,
       detail: `${item.contactName} bill for ${formatCurrency(item.amountDue, params.currency)}.`,
       location: sceneIdForWorld(item.worldId),
@@ -648,6 +661,7 @@ export function WorldView() {
   const [earnedXp, setEarnedXp] = useState(0);
   const [draftModal, setDraftModal] = useState<DraftModalState | null>(null);
   const [draftLoadingId, setDraftLoadingId] = useState<string | null>(null);
+  const [invoiceActionLoadingId, setInvoiceActionLoadingId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -746,7 +760,10 @@ export function WorldView() {
     board,
     currency: summary.organisation.baseCurrency,
   });
-  const allTasks: ActionableTask[] = [...goalTasks, ...tasks];
+  const dedupedBoardTasks = tasks.filter(
+    (task) => !task.invoiceId || !goalTasks.some((goalTask) => goalTask.invoiceId && goalTask.invoiceId === task.invoiceId),
+  );
+  const allTasks: ActionableTask[] = [...goalTasks, ...dedupedBoardTasks];
   const sceneTasks = allTasks.filter((task) => task.location === scene || task.location === "outside");
   const sceneMeta = SCENE_META[scene];
   const totalReceivables = home.metrics.receivables + biz.metrics.receivables;
@@ -871,6 +888,125 @@ export function WorldView() {
     } finally {
       setDraftLoadingId(null);
     }
+  }
+
+  function buildInvoiceTask(invoice: DetailPanel["invoices"][number], sourcePanel: DetailPanel): ActionableTask {
+    const existingTask = allTasks.find((task) => task.invoiceId === invoice.invoiceId);
+
+    if (existingTask) {
+      return existingTask;
+    }
+
+    const cleanName = invoice.contactName.replace(/\[(HOME|BIZ)\]\s*/g, "");
+    const invoiceLocation = sceneIdForWorld(sourcePanel.worldId);
+
+    if (invoice.status === "DRAFT") {
+      return {
+        id: `sheet-draft-${invoice.invoiceId}`,
+        invoiceId: invoice.invoiceId,
+        title: `Send draft ${invoice.invoiceNumber}`,
+        detail: "Review the invoice, then send a tailored client note from the invoice assistant.",
+        location: invoiceLocation,
+        xp: 70,
+        reason: "draft",
+        action: {
+          intent: "invoice_send",
+          customerName: cleanName,
+          recipientEmail: contactEmailFallback(cleanName),
+          subjectHint: `Invoice ready: ${invoice.invoiceNumber}`,
+          context: [
+            `This is an invoice draft for ${cleanName}.`,
+            `Invoice number: ${invoice.invoiceNumber}.`,
+            `Reference: ${invoice.reference ?? invoice.invoiceNumber}.`,
+            "Write a polished message that says the invoice is being sent now and invites any practical questions.",
+          ],
+        },
+      };
+    }
+
+    if (invoice.isOverdue || sourcePanel.target === "mailbox" || sourcePanel.target === "biz-revenue") {
+      return {
+        id: `sheet-overdue-${invoice.invoiceId}`,
+        invoiceId: invoice.invoiceId,
+        title: `Chase ${cleanName}`,
+        detail: `${invoice.invoiceNumber} needs a tailored follow-up before it slips further.`,
+        location: invoiceLocation,
+        xp: invoice.isOverdue ? 85 : 60,
+        reason: "overdue",
+        action: {
+          intent: sourcePanel.worldId === "home" ? "rent_followup" : "overdue_followup",
+          customerName: cleanName,
+          recipientEmail: contactEmailFallback(cleanName),
+          subjectHint: `Follow-up on ${invoice.invoiceNumber}`,
+          context: [
+            `This customer needs a follow-up on invoice ${invoice.invoiceNumber}.`,
+            invoice.reference ? `Reference: ${invoice.reference}.` : "Use the invoice context to sound specific.",
+            invoice.dueDate ? `Due date from source: ${invoice.dueDate}.` : "No due date is visible in source data.",
+            "Keep the email practical, specific to the scenario, and ask for an update without inventing any figures.",
+          ],
+        },
+      };
+    }
+
+    if (sourcePanel.target === "home-bills" || sourcePanel.target === "biz-bills") {
+      return {
+        id: `sheet-bill-${invoice.invoiceId}`,
+        invoiceId: invoice.invoiceId,
+        title: `Review supplier bill ${invoice.invoiceNumber}`,
+        detail: "Check due date, reference quality, and timing impact before accountant handoff.",
+        location: invoiceLocation,
+        xp: 55,
+        reason: "bill",
+      };
+    }
+
+    return {
+      id: `sheet-task-${invoice.invoiceId}`,
+      invoiceId: invoice.invoiceId,
+      title: `Review ${invoice.invoiceNumber}`,
+      detail: "Open the related work area and check the next step.",
+      location: invoiceLocation,
+      xp: 45,
+      reason: "followup",
+    };
+  }
+
+  function getInvoicePrimaryLabel(invoice: DetailPanel["invoices"][number], sourcePanel: DetailPanel) {
+    if (invoice.status === "DRAFT" && sourcePanel.target === "biz-drafts") {
+      return "Authorise in Xero";
+    }
+
+    return getTaskActionLabel(buildInvoiceTask(invoice, sourcePanel));
+  }
+
+  async function handleInvoicePrimaryAction(invoice: DetailPanel["invoices"][number], sourcePanel: DetailPanel) {
+    if (invoice.status === "DRAFT" && sourcePanel.target === "biz-drafts") {
+      setInvoiceActionLoadingId(invoice.invoiceId);
+
+      try {
+        const response = await fetch(`/api/xero/invoices/${invoice.invoiceId}/authorise`, {
+          method: "POST",
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          throw new Error("Unable to authorise invoice in Xero.");
+        }
+
+        window.location.reload();
+      } finally {
+        setInvoiceActionLoadingId(null);
+      }
+
+      return;
+    }
+
+    handleTaskAction(buildInvoiceTask(invoice, sourcePanel));
+  }
+
+  function handleOpenTaskFromPanel(invoice: DetailPanel["invoices"][number], sourcePanel: DetailPanel) {
+    setPanel(null);
+    openTaskArea(buildInvoiceTask(invoice, sourcePanel));
   }
 
   function openTaskArea(task: ActionableTask) {
@@ -1028,6 +1164,40 @@ export function WorldView() {
                 <StatChip label="Bank" value={formatCurrency(summary.combined.bankBalance ?? 0, summary.organisation.baseCurrency)} tone="accent" />
               </div>
             </PanelShell>
+
+            <PanelShell eyebrow="Tax" title="Self-assessment readiness">
+              <div className="space-y-3">
+                {(board?.taxChecklist ?? []).slice(0, 4).map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-[color:var(--world-ink)]">{item.title}</p>
+                        <p className="mt-1 text-xs leading-6 text-[color:var(--world-muted)]">{item.detail}</p>
+                      </div>
+                      <span
+                        className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+                          item.status === "ready"
+                            ? "bg-[rgba(107,196,127,0.14)] text-[color:var(--world-ink)]"
+                            : item.status === "warning"
+                              ? "bg-[rgba(245,110,76,0.14)] text-[color:var(--world-ink)]"
+                              : "bg-[rgba(246,200,90,0.16)] text-[color:var(--world-ink)]"
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                {!board?.taxChecklist?.length ? (
+                  <div className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-sm text-[color:var(--world-muted)]">
+                    Connect more Xero data to unlock filing prep checks, reference hygiene, and accountant handoff tasks.
+                  </div>
+                ) : null}
+              </div>
+            </PanelShell>
           </div>
 
           <div className="order-1 flex min-h-[420px] flex-col xl:order-2">
@@ -1066,8 +1236,9 @@ export function WorldView() {
                     alt={sceneMeta.title}
                     fill
                     priority
-                    className="object-cover object-center"
+                    className="world-scene-image object-cover object-center"
                   />
+                  <div className="world-scene-depth pointer-events-none absolute inset-0" />
                   {scene === "outside" ? (
                     <>
                       <div className="world-sun pointer-events-none absolute right-[7%] top-[7%] size-24 rounded-full" />
@@ -1077,9 +1248,14 @@ export function WorldView() {
                       <div className="world-bird world-bird-delayed pointer-events-none absolute left-[34%] top-[16%]" />
                       <div className="world-water-glint pointer-events-none absolute bottom-[18%] right-[14%] h-10 w-32" />
                       <div className="world-banner-shadow pointer-events-none absolute left-[21%] top-[53%] h-5 w-24 rounded-full" />
+                      <div className="world-voxel-shadow pointer-events-none absolute bottom-[16%] left-[11%] h-8 w-[24%]" />
+                      <div className="world-voxel-shadow pointer-events-none absolute bottom-[18%] left-[49%] h-10 w-[31%]" />
                       <div className="world-garden world-garden-left pointer-events-none absolute bottom-[12%] left-[6%]" />
                       <div className="world-garden world-garden-right pointer-events-none absolute bottom-[12%] right-[16%]" />
                       <div className="world-stones pointer-events-none absolute bottom-[17%] left-[38%] h-12 w-[24%]" />
+                      <div className="world-leaf-drift pointer-events-none absolute left-[14%] top-[29%] h-24 w-24" />
+                      <div className="world-window-spark pointer-events-none absolute left-[19%] top-[58%] h-6 w-6" />
+                      <div className="world-window-spark world-window-spark-delayed pointer-events-none absolute left-[64%] top-[55%] h-6 w-6" />
                     </>
                   ) : null}
                   {scene === "home" ? (
@@ -1090,6 +1266,10 @@ export function WorldView() {
                       <div className="world-rug pointer-events-none absolute bottom-[12%] left-[40%] h-16 w-[24%]" />
                       <div className="world-papers pointer-events-none absolute left-[23%] top-[59%] h-10 w-14" />
                       <div className="world-plant pointer-events-none absolute right-[12%] bottom-[22%] h-24 w-16" />
+                      <div className="world-furnace-glow pointer-events-none absolute left-[49%] top-[25%] h-28 w-28" />
+                      <div className="world-ember-pop pointer-events-none absolute left-[51%] top-[34%] h-16 w-16" />
+                      <div className="world-voxel-shadow pointer-events-none absolute bottom-[14%] left-[18%] h-8 w-[22%]" />
+                      <div className="world-voxel-shadow pointer-events-none absolute bottom-[16%] right-[11%] h-8 w-[23%]" />
                     </>
                   ) : null}
                   {scene === "biz" ? (
@@ -1100,6 +1280,10 @@ export function WorldView() {
                       <div className="world-ledger-lights pointer-events-none absolute left-[39%] top-[17%] h-4 w-[22%]" />
                       <div className="world-counter-items pointer-events-none absolute left-[47%] top-[64%] h-12 w-[20%]" />
                       <div className="world-crates pointer-events-none absolute right-[10%] bottom-[22%] h-20 w-20" />
+                      <div className="world-sign-glow pointer-events-none absolute left-[33%] top-[15%] h-16 w-[34%]" />
+                      <div className="world-ledger-scan pointer-events-none absolute left-[17%] top-[54%] h-28 w-[18%]" />
+                      <div className="world-ledger-scan world-ledger-scan-delayed pointer-events-none absolute right-[10%] top-[56%] h-28 w-[18%]" />
+                      <div className="world-voxel-shadow pointer-events-none absolute bottom-[15%] left-[42%] h-8 w-[28%]" />
                     </>
                   ) : null}
 
@@ -1169,14 +1353,23 @@ export function WorldView() {
                             </p>
                           </div>
                           <div className="flex shrink-0 flex-col items-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleTaskAction(task)}
-                              disabled={draftLoadingId === task.id}
-                              className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)]"
-                            >
-                              {draftLoadingId === task.id && task.action ? "Generating..." : getTaskActionLabel(task)}
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleTaskAction(task)}
+                                disabled={draftLoadingId === task.id}
+                                className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)]"
+                              >
+                                {draftLoadingId === task.id && task.action ? "Generating..." : getTaskActionLabel(task)}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openTaskArea(task)}
+                                className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-panel)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card-strong)]"
+                              >
+                                Open task
+                              </button>
+                            </div>
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
@@ -1358,7 +1551,14 @@ export function WorldView() {
         ) : null}
       </AnimatePresence>
 
-      <WorldDetailSheet panel={panel} onClose={() => setPanel(null)} />
+      <WorldDetailSheet
+        panel={panel}
+        onClose={() => setPanel(null)}
+        getInvoicePrimaryLabel={getInvoicePrimaryLabel}
+        onInvoicePrimaryAction={handleInvoicePrimaryAction}
+        onOpenTask={handleOpenTaskFromPanel}
+        actionLoadingInvoiceId={invoiceActionLoadingId}
+      />
     </div>
   );
 }

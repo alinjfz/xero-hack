@@ -3,6 +3,7 @@ import type { InvoiceSnapshot, SummaryResponse } from "@/lib/xero-summary";
 
 export type WorkflowTask = {
   id: string;
+  invoiceId?: string;
   title: string;
   detail: string;
   location: "outside" | "home" | "biz";
@@ -267,6 +268,7 @@ export function buildOperationsBoard(summary: Extract<SummaryResponse, { connect
   const tasks: WorkflowTask[] = [
     ...overdueChase.slice(0, 2).map((invoice) => ({
       id: `task-overdue-${invoice.invoiceId}`,
+      invoiceId: invoice.invoiceId,
       title: `Chase ${invoice.contactName.replace(/\[(HOME|BIZ)\]\s*/g, "")}`,
       detail: `${invoice.invoiceNumber} is overdue and needs a follow-up drafted from Gmail.`,
       location: locationForWorld(invoice.worldId),
@@ -275,6 +277,7 @@ export function buildOperationsBoard(summary: Extract<SummaryResponse, { connect
     })),
     ...invoiceAssistant.slice(0, 2).map((invoice) => ({
       id: `task-draft-${invoice.invoiceId}`,
+      invoiceId: invoice.invoiceId,
       title: `Send draft ${invoice.invoiceNumber}`,
       detail: "Check due date, reference, and send the client-facing note from the invoice assistant.",
       location: locationForWorld(invoice.worldId),
@@ -283,6 +286,7 @@ export function buildOperationsBoard(summary: Extract<SummaryResponse, { connect
     })),
     ...supplierBillQueue.slice(0, 2).map((bill) => ({
       id: `task-bill-${bill.invoiceId}`,
+      invoiceId: bill.invoiceId,
       title: `Review supplier bill ${bill.invoiceNumber}`,
       detail: bill.notes.join(" · "),
       location: locationForWorld(bill.worldId),
