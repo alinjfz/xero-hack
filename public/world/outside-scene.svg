@@ -28,6 +28,23 @@
   <polygon points="454,688 492,688 486,674 448,674" fill="#F05F64"/>
   <rect x="462" y="726" width="22" height="14" fill="#F7E2B2"/>
 
+  <polygon points="556,666 626,666 614,654 544,654" fill="#6E89A0"/>
+  <polygon points="556,666 556,760 544,748 544,654" fill="#4E657A"/>
+  <polygon points="556,666 626,666 626,760 556,760" fill="#5E778E"/>
+  <polygon points="566,624 614,624 604,614 556,614" fill="#D5A477"/>
+  <polygon points="566,624 566,666 556,656 556,614" fill="#A87C57"/>
+  <polygon points="566,624 614,624 614,666 566,666" fill="#BF9168"/>
+  <rect x="578" y="636" width="10" height="8" fill="#2F3B48"/>
+  <rect x="594" y="636" width="10" height="8" fill="#2F3B48"/>
+  <rect x="580" y="652" width="24" height="6" fill="#8A5A3A"/>
+  <rect x="570" y="760" width="20" height="64" fill="#35424F"/>
+  <rect x="594" y="760" width="20" height="64" fill="#35424F"/>
+  <rect x="564" y="824" width="24" height="18" fill="#1F2730"/>
+  <rect x="596" y="824" width="24" height="18" fill="#1F2730"/>
+  <rect x="570" y="678" width="42" height="58" fill="#5F7A8E"/>
+  <rect x="580" y="688" width="22" height="18" fill="#D8EEF8"/>
+  <rect x="578" y="712" width="26" height="8" fill="#A4C0D4"/>
+
   <polygon points="884,522 1298,522 1242,480 828,480" fill="#A0B6CA"/>
   <polygon points="884,522 884,834 828,792 828,480" fill="#657D94"/>
   <polygon points="884,522 1298,522 1298,834 884,834" fill="#7F9CB3"/>
