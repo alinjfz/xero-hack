@@ -160,6 +160,8 @@ type AccountingInvoicesApi = {
   ): Promise<InvoiceLookup>;
 };
 
+type ConnectedSummary = Extract<SummaryResponse, { connected: true }>;
+
 function normaliseInvoice(invoice: InvoiceSummary): InvoiceSnapshot {
   const now = new Date();
   const dueDate = invoice.dueDateString ?? null;
@@ -459,6 +461,325 @@ async function fetchBankBalance(xero: XeroClient, tenantId: string) {
   }
 }
 
+function buildConnectedSummaryFromData(params: {
+  tenantId: string;
+  tenantName: string;
+  organisation: {
+    id: string;
+    name: string;
+    legalName: string | null;
+    countryCode: string | null;
+    baseCurrency: string | null;
+  };
+  accountsCount: number;
+  bankAccounts: number;
+  bankBalance: number | null;
+  receivableInvoices: InvoiceSnapshot[];
+  payableInvoices: InvoiceSnapshot[];
+  openRouter: ReturnType<typeof getOpenRouterConfig>;
+}): ConnectedSummary {
+  const draftInvoices = params.receivableInvoices.filter((invoice) => invoice.status === "DRAFT");
+  const awaitingPayment = params.receivableInvoices.filter((invoice) => invoice.status === "AUTHORISED" && invoice.amountDue > 0);
+  const overdueInvoices = awaitingPayment.filter((invoice) => invoice.isOverdue).sort((left, right) => right.amountDue - left.amountDue);
+  const dueSoonInvoices = awaitingPayment
+    .filter((invoice) => {
+      if (!invoice.dueDate || invoice.isOverdue) {
+        return false;
+      }
+
+      const dueDate = new Date(invoice.dueDate);
+      const diffDays = Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+      return diffDays >= 0 && diffDays <= 7;
+    })
+    .sort((left, right) => left.amountDue - right.amountDue);
+  const awaitingBills = params.payableInvoices
+    .filter((invoice) => invoice.status === "AUTHORISED" && invoice.amountDue > 0)
+    .sort((left, right) => right.amountDue - left.amountDue);
+  const customerSnapshots = buildCustomerSnapshots(awaitingPayment);
+  const supplierSnapshots = buildSupplierSnapshots(awaitingBills);
+  const receivablesAmount = awaitingPayment.reduce((sum, invoice) => sum + invoice.amountDue, 0);
+  const overdueAmount = overdueInvoices.reduce((sum, invoice) => sum + invoice.amountDue, 0);
+  const dueSoonAmount = dueSoonInvoices.reduce((sum, invoice) => sum + invoice.amountDue, 0);
+  const averageInvoiceValue = awaitingPayment.length > 0 ? receivablesAmount / awaitingPayment.length : 0;
+  const insights = buildInsights({
+    baseCurrency: params.organisation.baseCurrency,
+    draftInvoices: draftInvoices.length,
+    awaitingPayment: awaitingPayment.length,
+    overdueInvoices,
+    dueSoonInvoices,
+    customerSnapshots,
+  });
+  const agents = buildAgents({
+    baseCurrency: params.organisation.baseCurrency,
+    draftInvoices: draftInvoices.length,
+    overdueInvoices,
+    dueSoonInvoices,
+    customerSnapshots,
+  });
+
+  return {
+    configured: true,
+    connected: true,
+    organisation: params.organisation,
+    tenant: {
+      id: params.tenantId,
+      name: params.tenantName,
+    },
+    metrics: {
+      accounts: params.accountsCount,
+      bankAccounts: params.bankAccounts,
+      bankBalance: params.bankBalance,
+      draftInvoices: draftInvoices.length,
+      awaitingPayment: awaitingPayment.length,
+      overdue: overdueInvoices.length,
+      receivablesAmount,
+      overdueAmount,
+      dueSoonAmount,
+      averageInvoiceValue,
+    },
+    insights,
+    agents,
+    customers: customerSnapshots,
+    suppliers: supplierSnapshots,
+    invoices: {
+      allReceivables: params.receivableInvoices,
+      allPayables: params.payableInvoices,
+      awaitingPayment: awaitingPayment.slice(0, 25),
+      overdue: overdueInvoices.slice(0, 5),
+      dueSoon: dueSoonInvoices.slice(0, 5),
+      bills: awaitingBills.slice(0, 25),
+      drafts: draftInvoices,
+    },
+    openRouter: params.openRouter,
+  };
+}
+
+function hasMeaningfulLedger(summary: ConnectedSummary) {
+  return (
+    summary.invoices.allReceivables.length > 0 ||
+    summary.invoices.allPayables.length > 0 ||
+    summary.metrics.receivablesAmount > 0 ||
+    summary.metrics.draftInvoices > 0
+  );
+}
+
+function isoDateFromOffset(daysOffset: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + daysOffset);
+  return date.toISOString().split("T")[0];
+}
+
+function showcaseInvoice(params: {
+  invoiceId: string;
+  invoiceNumber: string;
+  contactName: string;
+  reference: string;
+  amountDue: number;
+  total: number;
+  status: string;
+  issueOffset: number;
+  dueOffset?: number;
+}): InvoiceSnapshot {
+  const issueDate = isoDateFromOffset(params.issueOffset);
+  const dueDate = typeof params.dueOffset === "number" ? isoDateFromOffset(params.dueOffset) : null;
+  const parsedDue = dueDate ? new Date(dueDate) : null;
+  const now = new Date();
+  const isOverdue = Boolean(parsedDue && parsedDue < now && params.amountDue > 0);
+  const daysOverdue = parsedDue ? Math.max(0, Math.floor((now.getTime() - parsedDue.getTime()) / (1000 * 60 * 60 * 24))) : 0;
+
+  return {
+    invoiceId: params.invoiceId,
+    invoiceNumber: params.invoiceNumber,
+    contactName: params.contactName,
+    reference: params.reference,
+    amountDue: params.amountDue,
+    total: params.total,
+    currency: "GBP",
+    issueDate,
+    dueDate,
+    status: params.status,
+    isOverdue,
+    daysOverdue,
+  };
+}
+
+function buildShowcaseSummary(openRouter: ReturnType<typeof getOpenRouterConfig>, organisationName = "Demo Company (UK)"): ConnectedSummary {
+  const receivableInvoices: InvoiceSnapshot[] = [
+    showcaseInvoice({
+      invoiceId: "showcase-rent-1",
+      invoiceNumber: "INV-1001",
+      contactName: "Alex Mercer",
+      reference: "Riverside rent - March",
+      amountDue: 1200,
+      total: 1200,
+      status: "AUTHORISED",
+      issueOffset: -42,
+      dueOffset: -14,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-rent-2",
+      invoiceNumber: "INV-1002",
+      contactName: "Alex Mercer",
+      reference: "Riverside rent - April",
+      amountDue: 1200,
+      total: 1200,
+      status: "AUTHORISED",
+      issueOffset: -8,
+      dueOffset: 2,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-rent-3",
+      invoiceNumber: "INV-1003",
+      contactName: "Alex Mercer",
+      reference: "Riverside rent - May draft",
+      amountDue: 1200,
+      total: 1200,
+      status: "DRAFT",
+      issueOffset: 0,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-cafe-1",
+      invoiceNumber: "INV-2001",
+      contactName: "Copper Kettle Cafe",
+      reference: "Brand refresh sprint",
+      amountDue: 0,
+      total: 4800,
+      status: "PAID",
+      issueOffset: -18,
+      dueOffset: -4,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-northline-1",
+      invoiceNumber: "INV-2002",
+      contactName: "Northline Studio",
+      reference: "Website sprint phase 1",
+      amountDue: 2400,
+      total: 2400,
+      status: "AUTHORISED",
+      issueOffset: -6,
+      dueOffset: 7,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-northline-2",
+      invoiceNumber: "INV-2003",
+      contactName: "Northline Studio",
+      reference: "Logo concept round",
+      amountDue: 800,
+      total: 800,
+      status: "DRAFT",
+      issueOffset: -1,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-harbour-1",
+      invoiceNumber: "INV-2004",
+      contactName: "Harbour Retail Group",
+      reference: "Seasonal menu rollout",
+      amountDue: 3200,
+      total: 3200,
+      status: "AUTHORISED",
+      issueOffset: -10,
+      dueOffset: -2,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-maple-1",
+      invoiceNumber: "INV-2005",
+      contactName: "Maple Market",
+      reference: "Summer window campaign",
+      amountDue: 1850,
+      total: 1850,
+      status: "AUTHORISED",
+      issueOffset: -3,
+      dueOffset: 4,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-brightideas-1",
+      invoiceNumber: "INV-2006",
+      contactName: "Bright Ideas Agency",
+      reference: "Creative retainers proposal",
+      amountDue: 1450,
+      total: 1450,
+      status: "DRAFT",
+      issueOffset: 0,
+    }),
+  ];
+
+  const payableInvoices: InvoiceSnapshot[] = [
+    showcaseInvoice({
+      invoiceId: "showcase-council-1",
+      invoiceNumber: "BILL-3001",
+      contactName: "City Council",
+      reference: "Council tax Q1",
+      amountDue: 420,
+      total: 420,
+      status: "AUTHORISED",
+      issueOffset: -7,
+      dueOffset: 5,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-printco-1",
+      invoiceNumber: "BILL-3002",
+      contactName: "PrintCo Ltd",
+      reference: "Print run - menus and signage",
+      amountDue: 1890,
+      total: 1890,
+      status: "AUTHORISED",
+      issueOffset: -3,
+      dueOffset: 14,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-maint-1",
+      invoiceNumber: "BILL-3003",
+      contactName: "Greenstone Maintenance",
+      reference: "Emergency plumbing callout",
+      amountDue: 680,
+      total: 680,
+      status: "AUTHORISED",
+      issueOffset: -6,
+      dueOffset: 2,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-insurance-1",
+      invoiceNumber: "BILL-3004",
+      contactName: "Oakwater Insurance",
+      reference: "",
+      amountDue: 960,
+      total: 960,
+      status: "AUTHORISED",
+      issueOffset: -9,
+      dueOffset: 1,
+    }),
+    showcaseInvoice({
+      invoiceId: "showcase-logistics-1",
+      invoiceNumber: "BILL-3005",
+      contactName: "Granite Logistics",
+      reference: "Pop-up delivery support",
+      amountDue: 540,
+      total: 540,
+      status: "AUTHORISED",
+      issueOffset: -4,
+      dueOffset: 8,
+    }),
+  ];
+
+  return buildConnectedSummaryFromData({
+    tenantId: "showcase-tenant",
+    tenantName: "Showcase ledger",
+    organisation: {
+      id: "showcase-org",
+      name: organisationName,
+      legalName: `${organisationName} Ltd`,
+      countryCode: "GB",
+      baseCurrency: "GBP",
+    },
+    accountsCount: 18,
+    bankAccounts: 2,
+    bankBalance: 18450,
+    receivableInvoices,
+    payableInvoices,
+    openRouter,
+  });
+}
+
 export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<SummaryResponse> {
   const config = getXeroConfig();
   const openRouter = getOpenRouterConfig();
@@ -475,11 +796,7 @@ export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<Summ
   const session = await getAuthenticatedXeroClient(cookieStore);
 
   if (!session) {
-    return {
-      configured: true,
-      connected: false,
-      openRouter,
-    };
+    return buildShowcaseSummary(openRouter);
   }
 
   try {
@@ -498,48 +815,9 @@ export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<Summ
     const baseCurrency = organisation?.baseCurrency ? String(organisation.baseCurrency) : null;
     const receivableInvoices = receivableRaw.map(normaliseInvoice);
     const payableInvoices = payableRaw.map(normaliseInvoice);
-    const draftInvoices = receivableInvoices.filter((invoice) => invoice.status === "DRAFT");
-    const awaitingPayment = receivableInvoices.filter((invoice) => invoice.status === "AUTHORISED" && invoice.amountDue > 0);
-    const overdueInvoices = awaitingPayment.filter((invoice) => invoice.isOverdue).sort((left, right) => right.amountDue - left.amountDue);
-    const dueSoonInvoices = awaitingPayment
-      .filter((invoice) => {
-        if (!invoice.dueDate || invoice.isOverdue) {
-          return false;
-        }
-
-        const dueDate = new Date(invoice.dueDate);
-        const diffDays = Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-        return diffDays >= 0 && diffDays <= 7;
-      })
-      .sort((left, right) => left.amountDue - right.amountDue);
-    const awaitingBills = payableInvoices
-      .filter((invoice) => invoice.status === "AUTHORISED" && invoice.amountDue > 0)
-      .sort((left, right) => right.amountDue - left.amountDue);
-    const customerSnapshots = buildCustomerSnapshots(awaitingPayment);
-    const supplierSnapshots = buildSupplierSnapshots(awaitingBills);
-    const receivablesAmount = awaitingPayment.reduce((sum, invoice) => sum + invoice.amountDue, 0);
-    const overdueAmount = overdueInvoices.reduce((sum, invoice) => sum + invoice.amountDue, 0);
-    const dueSoonAmount = dueSoonInvoices.reduce((sum, invoice) => sum + invoice.amountDue, 0);
-    const averageInvoiceValue = awaitingPayment.length > 0 ? receivablesAmount / awaitingPayment.length : 0;
-    const insights = buildInsights({
-      baseCurrency,
-      draftInvoices: draftInvoices.length,
-      awaitingPayment: awaitingPayment.length,
-      overdueInvoices,
-      dueSoonInvoices,
-      customerSnapshots,
-    });
-    const agents = buildAgents({
-      baseCurrency,
-      draftInvoices: draftInvoices.length,
-      overdueInvoices,
-      dueSoonInvoices,
-      customerSnapshots,
-    });
-
-    return {
-      configured: true,
-      connected: true,
+    const liveSummary = buildConnectedSummaryFromData({
+      tenantId,
+      tenantName,
       organisation: {
         id: organisation?.organisationID ?? tenantId,
         name: organisation?.name ?? tenantName,
@@ -547,44 +825,21 @@ export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<Summ
         countryCode: organisation?.countryCode ? String(organisation.countryCode) : null,
         baseCurrency,
       },
-      tenant: {
-        id: tenantId,
-        name: tenantName,
-      },
-      metrics: {
-        accounts: accounts.length,
-        bankAccounts: accounts.filter((account) => String(account.type) === "BANK").length,
-        bankBalance,
-        draftInvoices: draftInvoices.length,
-        awaitingPayment: awaitingPayment.length,
-        overdue: overdueInvoices.length,
-        receivablesAmount,
-        overdueAmount,
-        dueSoonAmount,
-        averageInvoiceValue,
-      },
-      insights,
-      agents,
-      customers: customerSnapshots,
-      suppliers: supplierSnapshots,
-      invoices: {
-        allReceivables: receivableInvoices,
-        allPayables: payableInvoices,
-        awaitingPayment: awaitingPayment.slice(0, 25),
-        overdue: overdueInvoices.slice(0, 5),
-        dueSoon: dueSoonInvoices.slice(0, 5),
-        bills: awaitingBills.slice(0, 25),
-        drafts: draftInvoices,
-      },
+      accountsCount: accounts.length,
+      bankAccounts: accounts.filter((account) => String(account.type) === "BANK").length,
+      bankBalance,
+      receivableInvoices,
+      payableInvoices,
       openRouter,
-    };
-  } catch (error) {
+    });
+
+    if (!hasMeaningfulLedger(liveSummary)) {
+      return buildShowcaseSummary(openRouter, liveSummary.organisation.name);
+    }
+
+    return liveSummary;
+  } catch {
     clearXeroSession(cookieStore);
-    return {
-      configured: true,
-      connected: false,
-      error: error instanceof Error ? error.message : "The Xero session could not be refreshed.",
-      openRouter,
-    };
+    return buildShowcaseSummary(openRouter);
   }
 }

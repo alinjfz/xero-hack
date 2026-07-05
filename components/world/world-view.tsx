@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
   BriefcaseBusiness,
@@ -15,8 +16,8 @@ import {
   Sparkles,
   Star,
   Warehouse,
+  X,
 } from "lucide-react";
-import { GoalPicker } from "@/components/world/goal-picker";
 import { WorldDetailSheet, type DetailPanel } from "@/components/world/world-detail-sheet";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/format-currency";
@@ -28,7 +29,10 @@ import {
   recordStreakAction,
   saveStreakState,
   type ActiveGoal,
+  type GoalType,
+  saveActiveGoal,
 } from "@/lib/gamification";
+import type { OperationsBoard } from "@/lib/operations-board";
 import { pickMascotTip } from "@/lib/mascot-tips";
 import type { WorldSummaryResponse } from "@/lib/world-summary";
 
@@ -54,7 +58,43 @@ type WorldTask = {
   detail: string;
   location: SceneId;
   xp: number;
-  reason: "overdue" | "draft" | "bill" | "goal" | "followup";
+  reason: "overdue" | "draft" | "bill" | "goal" | "followup" | "tax";
+};
+
+type GoalSuggestion = {
+  type: GoalType;
+  label: string;
+  target: number;
+  rationale: string;
+};
+
+type GoalTaskAction = {
+  intent: "overdue_followup" | "retainer_pitch" | "check_in" | "invoice_send" | "rent_followup";
+  customerName: string;
+  recipientEmail?: string;
+  subjectHint: string;
+  context: string[];
+};
+
+type ActionableTask = WorldTask & {
+  action?: GoalTaskAction;
+};
+
+type DraftModalState = {
+  title: string;
+  taskId: string;
+  customerName: string;
+  recipientEmail?: string;
+  subject: string;
+  body: string;
+  gmailHref: string;
+};
+
+type HotspotStatus = {
+  count: number;
+  tone: "default" | "accent" | "danger";
+  label: string;
+  note: string;
 };
 
 const SCENE_META: Record<
@@ -194,6 +234,8 @@ function buildPanel(
   const home = summary.worlds.find((world) => world.id === "home")!;
   const biz = summary.worlds.find((world) => world.id === "biz")!;
   const currency = summary.organisation.baseCurrency;
+  const uniqueInvoices = (invoices: Array<(typeof home.receivables)[number]>) =>
+    invoices.filter((invoice, index, all) => all.findIndex((entry) => entry.invoiceId === invoice.invoiceId) === index);
 
   const panels: Record<PanelTarget, DetailPanel> = {
     mailbox: {
@@ -201,7 +243,7 @@ function buildPanel(
       hotspot: "Mailbox",
       title: "Due soon and overdue",
       subtitle: "What needs a reminder before cash slips further",
-      invoices: [...home.overdue, ...home.dueSoon, ...biz.overdue, ...biz.dueSoon],
+      invoices: uniqueInvoices([...home.overdue, ...home.dueSoon, ...biz.overdue, ...biz.dueSoon]),
       currency,
     },
     "home-rent": {
@@ -209,7 +251,7 @@ function buildPanel(
       hotspot: "Rent ledger",
       title: "Rent status",
       subtitle: "Open rent invoices and late rent",
-      invoices: [...home.receivables, ...home.overdue],
+      invoices: uniqueInvoices([...home.receivables, ...home.overdue]),
       currency,
     },
     "home-bills": {
@@ -318,6 +360,245 @@ function describeProgress(
   return formatCurrency(progress.current, currency);
 }
 
+function contactEmailFallback(name: string) {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ".");
+
+  return `${slug || "client"}@example.com`;
+}
+
+function buildGmailHref(params: { to?: string; subject: string; body: string }) {
+  const url = new URL("https://mail.google.com/mail/");
+  url.searchParams.set("view", "cm");
+  url.searchParams.set("fs", "1");
+  if (params.to) {
+    url.searchParams.set("to", params.to);
+  }
+  url.searchParams.set("su", params.subject);
+  url.searchParams.set("body", params.body);
+  return url.toString();
+}
+
+function sceneIdForWorld(worldId: "home" | "biz" | "shared"): SceneId {
+  if (worldId === "home") {
+    return "home";
+  }
+
+  if (worldId === "biz") {
+    return "biz";
+  }
+
+  return "outside";
+}
+
+function buildGoalTasks(params: {
+  goalType: GoalType | null;
+  board: OperationsBoard | null;
+  currency: string | null;
+}) {
+  if (!params.goalType || !params.board) {
+    return [] as ActionableTask[];
+  }
+
+  if (params.goalType === "rent_collected") {
+    const rentDraft = params.board.invoiceAssistant.find((item) => item.worldId === "home");
+    const rentFollowup = params.board.overdueChase.find((item) => item.worldId === "home");
+    const rentActions: Array<ActionableTask | null> = [
+      rentDraft
+        ? {
+            id: `goal-action-${rentDraft.invoiceId}`,
+            title: "Send the next rent draft",
+            detail: `${rentDraft.invoiceNumber} is ready to send for ${formatCurrency(rentDraft.amountDue, params.currency)}.`,
+            location: "home",
+            xp: 95,
+            reason: "goal",
+            action: {
+              intent: "invoice_send",
+              customerName: rentDraft.contactName,
+              recipientEmail: contactEmailFallback(rentDraft.contactName),
+              subjectHint: `Rent invoice ready: ${rentDraft.invoiceNumber}`,
+              context: [
+                `This is a rent invoice draft for ${rentDraft.contactName}.`,
+                `Reference: ${rentDraft.reference ?? "rent invoice"}.`,
+                `The owner wants to send it on time and sound professional, warm, and specific.`,
+                "Tell them the invoice is being sent now and invite any clarifying questions.",
+              ],
+            },
+          }
+        : null,
+      rentFollowup
+        ? {
+            id: `goal-action-${rentFollowup.invoiceId}`,
+            title: "Chase rent before it slips further",
+            detail: `${rentFollowup.invoiceNumber} is overdue for ${formatCurrency(rentFollowup.amountDue, params.currency)} and needs a tailored follow-up.`,
+            location: "home",
+            xp: 110,
+            reason: "goal",
+            action: {
+              intent: "rent_followup",
+              customerName: rentFollowup.contactName,
+              recipientEmail: contactEmailFallback(rentFollowup.contactName),
+              subjectHint: `Follow-up on ${rentFollowup.invoiceNumber}`,
+              context: [
+                `This is a rent collection follow-up for ${rentFollowup.contactName}.`,
+                `Invoice: ${rentFollowup.invoiceNumber}.`,
+                `It is currently ${rentFollowup.daysOverdue} days overdue.`,
+                "The owner wants a polite but clear rent reminder that asks for status and offers help if anything is blocking payment.",
+              ],
+            },
+          }
+        : null,
+    ];
+
+    return rentActions.filter((action): action is ActionableTask => Boolean(action));
+  }
+
+  if (params.goalType === "zero_overdue") {
+    return params.board.overdueChase.slice(0, 2).map((item) => ({
+      id: `goal-action-${item.invoiceId}`,
+      title: `Clear ${item.invoiceNumber}`,
+      detail: `${item.contactName} owes ${formatCurrency(item.amountDue, params.currency)} and is ${item.daysOverdue} days late.`,
+      location: sceneIdForWorld(item.worldId),
+      xp: item.risk === "high" ? 110 : 85,
+      reason: "goal" as const,
+      action: {
+        intent: "overdue_followup",
+        customerName: item.contactName,
+        recipientEmail: contactEmailFallback(item.contactName),
+        subjectHint: `Follow-up on ${item.invoiceNumber}`,
+        context: [
+          `This customer has an overdue invoice: ${item.invoiceNumber}.`,
+          `It is ${item.daysOverdue} days overdue.`,
+          "Write a polite but commercially sharp follow-up that asks for an update and offers to resend anything needed.",
+        ],
+      },
+    }));
+  }
+
+  if (params.goalType === "revenue_target") {
+    return params.board.invoiceAssistant.slice(0, 2).map((item) => ({
+      id: `goal-action-${item.invoiceId}`,
+      title: `Turn ${item.invoiceNumber} into live revenue`,
+      detail: `Draft value ${formatCurrency(item.amountDue, params.currency)}. Check hygiene and send.`,
+      location: sceneIdForWorld(item.worldId),
+      xp: 75,
+      reason: "goal" as const,
+      action: {
+        intent: "invoice_send",
+        customerName: item.contactName,
+        recipientEmail: contactEmailFallback(item.contactName),
+        subjectHint: `Invoice ready: ${item.invoiceNumber}`,
+        context: [
+          `This is an invoice draft for ${item.contactName}.`,
+          `Reference: ${item.reference ?? item.invoiceNumber}.`,
+          "Write a short, confident client email saying the invoice is being sent now and inviting any practical questions.",
+        ],
+      },
+    }));
+  }
+
+  if (params.goalType === "cash_buffer") {
+    return params.board.supplierBills.slice(0, 2).map((item) => ({
+      id: `goal-action-${item.invoiceId}`,
+      title: `Review ${item.invoiceNumber} before cash leaves`,
+      detail: `${item.contactName} bill for ${formatCurrency(item.amountDue, params.currency)}.`,
+      location: sceneIdForWorld(item.worldId),
+      xp: 55,
+      reason: "goal" as const,
+    }));
+  }
+
+  return params.board.tasks.slice(0, 2).map((item) => ({
+    ...item,
+    title: item.title,
+    detail: item.detail,
+  }));
+}
+
+function buildHotspotStatuses(summary: Extract<WorldSummaryResponse, { connected: true }>, tasks: WorldTask[]) {
+  const home = summary.worlds.find((world) => world.id === "home")!;
+  const biz = summary.worlds.find((world) => world.id === "biz")!;
+  const openTasks = tasks.length;
+  const overdueEverywhere = home.overdue.length + biz.overdue.length;
+
+  const countTone = (count: number, severeAt = 3): HotspotStatus["tone"] => {
+    if (count >= severeAt) {
+      return "danger";
+    }
+
+    if (count > 0) {
+      return "accent";
+    }
+
+    return "default";
+  };
+
+  return {
+    "outside-house": {
+      count: home.overdue.length + home.payables.length,
+      tone: countTone(home.overdue.length + home.payables.length),
+      label: "House pulse",
+      note: "Rent and property costs are moving inside the house.",
+    },
+    "outside-mailbox": {
+      count: home.dueSoon.length + home.overdue.length + biz.dueSoon.length + biz.overdue.length,
+      tone: countTone(home.dueSoon.length + home.overdue.length + biz.dueSoon.length + biz.overdue.length),
+      label: "Fresh post",
+      note: "This is the fastest way to spot new due-soon or overdue items.",
+    },
+    "outside-business": {
+      count: biz.receivables.length + biz.drafts.length + biz.payables.length,
+      tone: countTone(biz.receivables.length + biz.drafts.length + biz.payables.length, 4),
+      label: "Open shop",
+      note: "The business side is carrying your client work, revenue, and bills.",
+    },
+    "home-rent": {
+      count: home.receivables.length + home.overdue.length,
+      tone: countTone(home.receivables.length + home.overdue.length),
+      label: "Rent desk",
+      note: "Track tenants, unpaid rent, and upcoming cash into the property side.",
+    },
+    "home-bills": {
+      count: home.payables.length,
+      tone: countTone(home.payables.length),
+      label: "Bills pile",
+      note: "Utilities, repairs, and supplier costs are stored here.",
+    },
+    "biz-receivables": {
+      count: biz.receivables.length + biz.overdue.length,
+      tone: countTone(biz.receivables.length + biz.overdue.length, 4),
+      label: "Client cash",
+      note: "Open invoices are waiting to turn into real money.",
+    },
+    "biz-drafts": {
+      count: biz.drafts.length,
+      tone: countTone(biz.drafts.length),
+      label: "Ready drafts",
+      note: "Draft work is queued here, ready to go live.",
+    },
+    "biz-bills": {
+      count: biz.payables.length,
+      tone: countTone(biz.payables.length),
+      label: "Supplier stack",
+      note: "Costs leaving the business are accumulating on this shelf.",
+    },
+    "biz-revenue": {
+      count: Math.max(1, Math.ceil(biz.metrics.revenueThisMonth > 0 ? biz.metrics.revenueThisMonth / 10000 : 0)),
+      tone: biz.metrics.revenueThisMonth > 0 ? "accent" : "default",
+      label: "Revenue signal",
+      note: "This board should feel alive whenever the month is producing revenue.",
+    },
+    overview: {
+      count: overdueEverywhere + openTasks,
+      tone: countTone(overdueEverywhere + openTasks, 5),
+      label: "World state",
+      note: "Use this as the global pressure gauge for the whole world.",
+    },
+  } satisfies Record<string, HotspotStatus>;
+}
+
 export function WorldView() {
   const [summary, setSummary] = useState<WorldSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -327,24 +608,37 @@ export function WorldView() {
   const [scene, setScene] = useState<SceneId>("outside");
   const [tasks, setTasks] = useState<WorldTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
+  const [board, setBoard] = useState<OperationsBoard | null>(null);
+  const [goalModalOpen, setGoalModalOpen] = useState(false);
+  const [goalSuggestions, setGoalSuggestions] = useState<GoalSuggestion[]>([]);
+  const [goalSuggestionsLoading, setGoalSuggestionsLoading] = useState(false);
+  const [selectedGoalType, setSelectedGoalType] = useState<GoalType>(goal?.type ?? "revenue_target");
+  const [selectedGoalTarget, setSelectedGoalTarget] = useState<number>(goal?.target ?? 5000);
+  const [selectedGoalLabel, setSelectedGoalLabel] = useState<string>(goal?.label ?? "");
+  const [customGoalText, setCustomGoalText] = useState("");
   const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
   const [earnedXp, setEarnedXp] = useState(0);
+  const [draftModal, setDraftModal] = useState<DraftModalState | null>(null);
+  const [draftLoadingId, setDraftLoadingId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
-        const [summaryResponse, tasksResponse] = await Promise.all([
+        const [summaryResponse, tasksResponse, boardResponse] = await Promise.all([
           fetch("/api/world/summary", { credentials: "include", cache: "no-store" }),
           fetch("/api/world/tasks", { credentials: "include", cache: "no-store" }),
+          fetch("/api/operations/board", { credentials: "include", cache: "no-store" }),
         ]);
         const summaryData = (await summaryResponse.json()) as WorldSummaryResponse;
         const tasksData = (await tasksResponse.json().catch(() => ({ tasks: [] }))) as { tasks?: WorldTask[] };
+        const boardData = (await boardResponse.json().catch(() => null)) as OperationsBoard | null;
 
         if (!cancelled) {
           setSummary(summaryData);
           setTasks(tasksData.tasks ?? []);
+          setBoard(boardData);
         }
       } finally {
         if (!cancelled) {
@@ -418,10 +712,17 @@ export function WorldView() {
   const home = summary.worlds.find((world) => world.id === "home")!;
   const biz = summary.worlds.find((world) => world.id === "biz")!;
   const connectedSummary = summary;
-  const sceneTasks = tasks.filter((task) => task.location === scene || task.location === "outside");
   const progress = computeGoalProgress(goal, summary);
+  const goalTasks = buildGoalTasks({
+    goalType: goal?.type ?? null,
+    board,
+    currency: summary.organisation.baseCurrency,
+  });
+  const allTasks: ActionableTask[] = [...goalTasks, ...tasks];
+  const sceneTasks = allTasks.filter((task) => task.location === scene || task.location === "outside");
   const sceneMeta = SCENE_META[scene];
   const totalReceivables = home.metrics.receivables + biz.metrics.receivables;
+  const hotspotStatuses = buildHotspotStatuses(summary, tasks);
   const currentHealth = summary.worlds.some((world) => world.health === "stormy")
     ? "stormy"
     : summary.worlds.some((world) => world.health === "cloudy")
@@ -440,6 +741,95 @@ export function WorldView() {
     setEarnedXp((current) => current + task.xp);
     const next = recordStreakAction("progress");
     setStreak(next);
+  }
+
+  async function openGoalModal() {
+    if (goal) {
+      setSelectedGoalType(goal.type);
+      setSelectedGoalTarget(goal.target);
+      setSelectedGoalLabel(goal.label);
+      setCustomGoalText(goal.customText ?? "");
+    }
+
+    setGoalModalOpen(true);
+    setGoalSuggestionsLoading(true);
+
+    try {
+      const response = await fetch("/api/ai/goal-suggestions", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      const data = (await response.json()) as { suggestions?: GoalSuggestion[] };
+      setGoalSuggestions(data.suggestions ?? []);
+      if (data.suggestions?.[0]) {
+        setSelectedGoalType(data.suggestions[0].type);
+        setSelectedGoalTarget(data.suggestions[0].target);
+        setSelectedGoalLabel(data.suggestions[0].label);
+      }
+    } finally {
+      setGoalSuggestionsLoading(false);
+    }
+  }
+
+  function applyGoal() {
+    const label = selectedGoalType === "custom" ? customGoalText || "Custom goal" : selectedGoalLabel;
+    const nextGoal: ActiveGoal = {
+      type: selectedGoalType,
+      label,
+      target: selectedGoalTarget,
+      customText: selectedGoalType === "custom" ? customGoalText : undefined,
+      setAt: new Date().toISOString(),
+    };
+    saveActiveGoal(nextGoal);
+    setGoal(nextGoal);
+    const baseline = computeGoalProgress(nextGoal, connectedSummary);
+    if (baseline.percent > 0) {
+      const next = recordStreakAction("progress");
+      setStreak(next);
+    } else {
+      saveStreakState(streak);
+    }
+    setGoalModalOpen(false);
+  }
+
+  async function handleGenerateDraft(task: ActionableTask) {
+    if (!task.action) {
+      return;
+    }
+
+    setDraftLoadingId(task.id);
+
+    try {
+      const response = await fetch("/api/ai/outreach-draft", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(task.action),
+      });
+      const data = (await response.json()) as {
+        draft?: string;
+        subject?: string;
+        body?: string;
+        gmailHref?: string;
+      };
+
+      if (!response.ok || !data.body || !data.subject) {
+        throw new Error("Unable to generate AI draft.");
+      }
+
+      setDraftModal({
+        title: task.title,
+        taskId: task.id,
+        customerName: task.action.customerName,
+        recipientEmail: task.action.recipientEmail,
+        subject: data.subject,
+        body: data.body,
+        gmailHref: data.gmailHref ?? buildGmailHref({ to: task.action.recipientEmail, subject: data.subject, body: data.body }),
+      });
+    } finally {
+      setDraftLoadingId(null);
+    }
   }
 
   function handleHotspot(hotspot: SceneHotspot) {
@@ -533,20 +923,13 @@ export function WorldView() {
                     <div className="world-progress-fill h-full" style={{ width: `${progress.percent}%` }} />
                   </div>
                 </div>
-                <GoalPicker
-                  bankBalanceAvailable={summary.combined.bankBalance !== null}
-                  currency={summary.organisation.baseCurrency}
-                  onGoalChange={(nextGoal) => {
-                    setGoal(nextGoal);
-                    const baseline = computeGoalProgress(nextGoal, summary);
-                    if (baseline.percent > 0) {
-                      const next = recordStreakAction("progress");
-                      setStreak(next);
-                    } else {
-                      saveStreakState(streak);
-                    }
-                  }}
-                />
+                <Button
+                  type="button"
+                  onClick={openGoalModal}
+                  className="w-full rounded-[16px] bg-[color:var(--world-accent)] text-[#1d140d] hover:bg-[color:var(--world-accent-2)]"
+                >
+                  Set New Goal
+                </Button>
               </div>
             </PanelShell>
           </div>
@@ -591,15 +974,42 @@ export function WorldView() {
                   />
                   {scene === "outside" ? (
                     <>
+                      <div className="world-sun pointer-events-none absolute right-[7%] top-[7%] size-24 rounded-full" />
                       <div className="world-cloud world-cloud-one pointer-events-none absolute left-[10%] top-[10%] h-8 w-16 rounded-full bg-white/65" />
                       <div className="world-cloud world-cloud-two pointer-events-none absolute right-[16%] top-[14%] h-10 w-20 rounded-full bg-white/50" />
+                      <div className="world-bird pointer-events-none absolute left-[28%] top-[18%]" />
+                      <div className="world-bird world-bird-delayed pointer-events-none absolute left-[34%] top-[16%]" />
                       <div className="world-water-glint pointer-events-none absolute bottom-[18%] right-[14%] h-10 w-32" />
+                      <div className="world-banner-shadow pointer-events-none absolute left-[21%] top-[53%] h-5 w-24 rounded-full" />
+                      <div className="world-garden world-garden-left pointer-events-none absolute bottom-[12%] left-[6%]" />
+                      <div className="world-garden world-garden-right pointer-events-none absolute bottom-[12%] right-[16%]" />
+                      <div className="world-stones pointer-events-none absolute bottom-[17%] left-[38%] h-12 w-[24%]" />
                     </>
                   ) : null}
-                  {scene === "home" ? <div className="world-smoke pointer-events-none absolute left-[48%] top-[14%] h-10 w-4" /> : null}
+                  {scene === "home" ? (
+                    <>
+                      <div className="world-smoke pointer-events-none absolute left-[48%] top-[14%] h-10 w-4" />
+                      <div className="world-room-glow pointer-events-none absolute left-[8%] top-[13%] h-24 w-24 rounded-full" />
+                      <div className="world-hanging-lamp pointer-events-none absolute left-1/2 top-[9%] h-20 w-10 -translate-x-1/2" />
+                      <div className="world-rug pointer-events-none absolute bottom-[12%] left-[40%] h-16 w-[24%]" />
+                      <div className="world-papers pointer-events-none absolute left-[23%] top-[59%] h-10 w-14" />
+                      <div className="world-plant pointer-events-none absolute right-[12%] bottom-[22%] h-24 w-16" />
+                    </>
+                  ) : null}
+                  {scene === "biz" ? (
+                    <>
+                      <div className="world-room-glow world-room-glow-wide pointer-events-none absolute right-[8%] top-[12%] h-24 w-32 rounded-full" />
+                      <div className="world-hanging-lamp pointer-events-none absolute left-[27%] top-[8%] h-20 w-10" />
+                      <div className="world-hanging-lamp pointer-events-none absolute right-[24%] top-[8%] h-20 w-10" />
+                      <div className="world-ledger-lights pointer-events-none absolute left-[39%] top-[17%] h-4 w-[22%]" />
+                      <div className="world-counter-items pointer-events-none absolute left-[47%] top-[64%] h-12 w-[20%]" />
+                      <div className="world-crates pointer-events-none absolute right-[10%] bottom-[22%] h-20 w-20" />
+                    </>
+                  ) : null}
 
                   {HOTSPOTS[scene].map((hotspot) => {
                     const Icon = hotspot.icon;
+                    const status = hotspotStatuses[hotspot.id as keyof typeof hotspotStatuses];
 
                     return (
                       <button
@@ -615,6 +1025,13 @@ export function WorldView() {
                         }}
                       >
                         <span className="world-hotspot-ring" />
+                        {status.count > 0 ? (
+                          <span className={`world-hotspot-badge world-hotspot-badge-${status.tone}`}>
+                            {status.count > 9 ? "9+" : status.count} new
+                          </span>
+                        ) : (
+                          <span className="world-hotspot-badge world-hotspot-badge-default">clear</span>
+                        )}
                         <span className="world-hotspot-pill">
                           <Icon className="size-3.5" />
                           {hotspot.label}
@@ -664,6 +1081,18 @@ export function WorldView() {
                             {done ? "Done" : "Complete"}
                           </button>
                         </div>
+                        {task.action ? (
+                          <div className="mt-3">
+                            <button
+                              type="button"
+                              onClick={() => handleGenerateDraft(task)}
+                              disabled={draftLoadingId === task.id}
+                              className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)]"
+                            >
+                              {draftLoadingId === task.id ? "Generating..." : "Draft with AI"}
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })
@@ -695,6 +1124,156 @@ export function WorldView() {
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {goalModalOpen ? (
+          <>
+            <motion.button
+              type="button"
+              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setGoalModalOpen(false)}
+            />
+            <motion.div
+              className="fixed inset-x-0 bottom-0 z-50 mx-auto max-h-[82vh] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-[color:var(--world-border)] bg-[color:var(--world-panel)] shadow-2xl"
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 380, damping: 36 }}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-[color:var(--world-border)] px-6 py-5">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--world-muted)]">Goal setup</p>
+                  <h2 className="font-[family-name:var(--font-display)] text-2xl text-[color:var(--world-ink)]">Set New Goal</h2>
+                  <p className="mt-1 text-sm text-[color:var(--world-muted)]">AI suggestions are based on the current ledger and can be replaced with your own target.</p>
+                </div>
+                <Button variant="secondary" size="sm" onClick={() => setGoalModalOpen(false)}>
+                  <X className="size-4" />
+                </Button>
+              </div>
+              <div className="space-y-5 overflow-y-auto px-6 py-5">
+                {goalSuggestionsLoading ? (
+                  <p className="text-sm text-[color:var(--world-muted)]">Loading suggestions...</p>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {goalSuggestions.map((suggestion) => (
+                      <button
+                        key={`${suggestion.type}-${suggestion.label}`}
+                        type="button"
+                        onClick={() => {
+                          setSelectedGoalType(suggestion.type);
+                          setSelectedGoalTarget(suggestion.target);
+                          setSelectedGoalLabel(suggestion.label);
+                        }}
+                        className={`rounded-[18px] border px-4 py-4 text-left ${
+                          selectedGoalType === suggestion.type && selectedGoalLabel === suggestion.label
+                            ? "border-[color:var(--world-accent-2)] bg-[color:var(--world-card-strong)]"
+                            : "border-[color:var(--world-border)] bg-[color:var(--world-card)]"
+                        }`}
+                      >
+                        <p className="text-sm font-semibold text-[color:var(--world-ink)]">{suggestion.label}</p>
+                        <p className="mt-2 text-xs leading-6 text-[color:var(--world-muted)]">{suggestion.rationale}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-[color:var(--world-muted)]">Selected goal label</p>
+                  <input
+                    value={selectedGoalLabel}
+                    onChange={(event) => setSelectedGoalLabel(event.target.value)}
+                    className="w-full rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-[color:var(--world-ink)] outline-none"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-[color:var(--world-muted)]">Target value</p>
+                  <input
+                    type="number"
+                    min={0}
+                    step={100}
+                    value={selectedGoalTarget}
+                    onChange={(event) => setSelectedGoalTarget(Math.max(0, Number(event.target.value) || 0))}
+                    className="w-full rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-[color:var(--world-ink)] outline-none"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-[color:var(--world-muted)]">Write your own goal</p>
+                  <textarea
+                    value={customGoalText}
+                    onChange={(event) => {
+                      setCustomGoalText(event.target.value);
+                      setSelectedGoalType("custom");
+                      setSelectedGoalLabel(event.target.value || "Custom goal");
+                    }}
+                    rows={4}
+                    className="w-full rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-[color:var(--world-ink)] outline-none"
+                    placeholder="Example: Collect every rent invoice within 3 days of due date."
+                  />
+                </div>
+                <Button
+                  type="button"
+                  onClick={applyGoal}
+                  className="w-full rounded-[16px] bg-[color:var(--world-accent)] text-[#1d140d] hover:bg-[color:var(--world-accent-2)]"
+                >
+                  Save goal
+                </Button>
+              </div>
+            </motion.div>
+          </>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {draftModal ? (
+          <>
+            <motion.button
+              type="button"
+              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDraftModal(null)}
+            />
+            <motion.div
+              className="fixed inset-x-0 bottom-0 z-50 mx-auto max-h-[82vh] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-[color:var(--world-border)] bg-[color:var(--world-panel)] shadow-2xl"
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 380, damping: 36 }}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-[color:var(--world-border)] px-6 py-5">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--world-muted)]">AI email draft</p>
+                  <h2 className="font-[family-name:var(--font-display)] text-2xl text-[color:var(--world-ink)]">{draftModal.title}</h2>
+                  <p className="mt-1 text-sm text-[color:var(--world-muted)]">{draftModal.customerName}</p>
+                </div>
+                <Button variant="secondary" size="sm" onClick={() => setDraftModal(null)}>
+                  <X className="size-4" />
+                </Button>
+              </div>
+              <div className="space-y-4 overflow-y-auto px-6 py-5">
+                <div className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-[color:var(--world-muted)]">Subject</p>
+                  <p className="mt-1 text-sm font-semibold text-[color:var(--world-ink)]">{draftModal.subject}</p>
+                </div>
+                <div className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-4">
+                  <p className="whitespace-pre-wrap text-sm leading-6 text-[color:var(--world-ink)]">{draftModal.body}</p>
+                </div>
+                <a
+                  href={draftModal.gmailHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex w-full justify-center rounded-[16px] bg-[color:var(--world-accent)] px-4 py-3 text-sm font-semibold text-[#1d140d] hover:bg-[color:var(--world-accent-2)]"
+                >
+                  Open in Gmail
+                </a>
+              </div>
+            </motion.div>
+          </>
+        ) : null}
+      </AnimatePresence>
 
       <WorldDetailSheet panel={panel} onClose={() => setPanel(null)} />
     </div>

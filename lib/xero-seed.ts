@@ -20,11 +20,13 @@ type SeedInvoice = {
 };
 
 export const DEMO_CONTACTS: SeedContact[] = [
-  { name: "[HOME] Alex Mercer", email: "alex.mercer@example.com" },
-  { name: "[HOME] City Council", email: "council@example.com", isSupplier: true },
-  { name: "[BIZ] Bright Cafe", email: "finance@brightcafe.example.com" },
-  { name: "[BIZ] Northline Studio", email: "ops@northline.example.com" },
-  { name: "[BIZ] PrintCo Ltd", email: "billing@printco.example.com", isSupplier: true },
+  { name: "Alex Mercer", email: "alex.mercer@example.com" },
+  { name: "City Council", email: "council@example.com", isSupplier: true },
+  { name: "Copper Kettle Cafe", email: "finance@copperkettle.example.com" },
+  { name: "Northline Studio", email: "ops@northline.example.com" },
+  { name: "PrintCo Ltd", email: "billing@printco.example.com", isSupplier: true },
+  { name: "Greenstone Maintenance", email: "ops@greenstone.example.com", isSupplier: true },
+  { name: "Harbour Retail Group", email: "finance@harbourretail.example.com" },
 ];
 
 function daysAgo(days: number) {
@@ -41,9 +43,9 @@ function daysFromNow(days: number) {
 
 export const DEMO_INVOICES: SeedInvoice[] = [
   {
-    reference: "KISH_DEMO [HOME] Rent Mar",
-    contactName: "[HOME] Alex Mercer",
-    description: "Monthly rent — March",
+    reference: "Riverside rent - March",
+    contactName: "Alex Mercer",
+    description: "Riverside flat monthly rent - March",
     amount: 1200,
     type: "ACCREC",
     status: "AUTHORISED",
@@ -51,9 +53,9 @@ export const DEMO_INVOICES: SeedInvoice[] = [
     dueDate: daysAgo(14),
   },
   {
-    reference: "KISH_DEMO [HOME] Rent Apr",
-    contactName: "[HOME] Alex Mercer",
-    description: "Monthly rent — April",
+    reference: "Riverside rent - April",
+    contactName: "Alex Mercer",
+    description: "Riverside flat monthly rent - April",
     amount: 1200,
     type: "ACCREC",
     status: "AUTHORISED",
@@ -61,8 +63,17 @@ export const DEMO_INVOICES: SeedInvoice[] = [
     dueDate: daysFromNow(3),
   },
   {
-    reference: "KISH_DEMO [BIZ] Brand refresh",
-    contactName: "[BIZ] Bright Cafe",
+    reference: "Riverside rent - May draft",
+    contactName: "Alex Mercer",
+    description: "Riverside flat monthly rent - May",
+    amount: 1200,
+    type: "ACCREC",
+    status: "DRAFT",
+    issueDate: daysAgo(1),
+  },
+  {
+    reference: "Brand refresh sprint",
+    contactName: "Copper Kettle Cafe",
     description: "Brand refresh package",
     amount: 4800,
     type: "ACCREC",
@@ -71,8 +82,8 @@ export const DEMO_INVOICES: SeedInvoice[] = [
     dueDate: daysAgo(5),
   },
   {
-    reference: "KISH_DEMO [BIZ] Website sprint",
-    contactName: "[BIZ] Northline Studio",
+    reference: "Website sprint phase 1",
+    contactName: "Northline Studio",
     description: "Website sprint — phase 1",
     amount: 2400,
     type: "ACCREC",
@@ -81,8 +92,8 @@ export const DEMO_INVOICES: SeedInvoice[] = [
     dueDate: daysFromNow(10),
   },
   {
-    reference: "KISH_DEMO [BIZ] Logo concepts",
-    contactName: "[BIZ] Northline Studio",
+    reference: "Logo concept round",
+    contactName: "Northline Studio",
     description: "Logo concept round",
     amount: 800,
     type: "ACCREC",
@@ -90,8 +101,8 @@ export const DEMO_INVOICES: SeedInvoice[] = [
     issueDate: daysAgo(1),
   },
   {
-    reference: "KISH_DEMO [HOME] Council tax Q1",
-    contactName: "[HOME] City Council",
+    reference: "Council tax Q1",
+    contactName: "City Council",
     description: "Council tax Q1",
     amount: 420,
     type: "ACCPAY",
@@ -100,14 +111,34 @@ export const DEMO_INVOICES: SeedInvoice[] = [
     dueDate: daysFromNow(5),
   },
   {
-    reference: "KISH_DEMO [BIZ] Print run",
-    contactName: "[BIZ] PrintCo Ltd",
+    reference: "Print run - menus and signage",
+    contactName: "PrintCo Ltd",
     description: "Print run — menus and signage",
     amount: 1890,
     type: "ACCPAY",
     status: "AUTHORISED",
     issueDate: daysAgo(3),
     dueDate: daysFromNow(14),
+  },
+  {
+    reference: "Emergency plumbing callout",
+    contactName: "Greenstone Maintenance",
+    description: "Emergency plumbing callout and repair",
+    amount: 680,
+    type: "ACCPAY",
+    status: "AUTHORISED",
+    issueDate: daysAgo(6),
+    dueDate: daysFromNow(2),
+  },
+  {
+    reference: "Seasonal menu rollout",
+    contactName: "Harbour Retail Group",
+    description: "Seasonal menu rollout project",
+    amount: 3200,
+    type: "ACCREC",
+    status: "AUTHORISED",
+    issueDate: daysAgo(8),
+    dueDate: daysAgo(1),
   },
 ];
 

@@ -8,7 +8,10 @@ import {
   CalendarClock,
   CircleAlert,
   LoaderCircle,
+  Mail,
   ReceiptPoundSterling,
+  ScrollText,
+  ShieldCheck,
   Sparkles,
   Unplug,
   Users2,
@@ -20,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ContractIntelligence } from "@/components/contract-intelligence";
 import { CliSeedSetup } from "@/components/cli-seed-setup";
+import type { OperationsBoard } from "@/lib/operations-board";
 import { SummaryResponse } from "@/lib/xero-summary";
 
 function isConnectedSummary(summary: SummaryResponse | null): summary is Extract<SummaryResponse, { connected: true }> {
@@ -43,9 +47,9 @@ function getCustomerCostDefaults(amountDue: number, isOverdue: boolean) {
   };
 }
 
-const demoLeakingCustomers = [
+const showcaseLeakingCustomers = [
   {
-    name: "Acme Corp (Demo)",
+    name: "Acme Corp",
     revenue: 220000,
     trueProfit: 11000,
     margin: 5,
@@ -53,7 +57,7 @@ const demoLeakingCustomers = [
     isDemo: true,
   },
   {
-    name: "Globex Industries (Demo)",
+    name: "Globex Industries",
     revenue: 85000,
     trueProfit: 15000,
     margin: 17.6,
@@ -70,7 +74,11 @@ export function XeroDashboard() {
   const [briefModel, setBriefModel] = useState<string | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
   const [briefError, setBriefError] = useState<string | null>(null);
-  const [showDemoLeakage, setShowDemoLeakage] = useState(false);
+  const [showShowcaseLeakage, setShowShowcaseLeakage] = useState(false);
+  const [operationsBoard, setOperationsBoard] = useState<OperationsBoard | null>(null);
+  const [operationsLoading, setOperationsLoading] = useState(false);
+  const [outreachDrafts, setOutreachDrafts] = useState<Record<string, string>>({});
+  const [loadingOutreach, setLoadingOutreach] = useState<Record<string, boolean>>({});
 
   const [customerAiRecs, setCustomerAiRecs] = useState<Record<string, string>>({});
   const [loadingRecs, setLoadingRecs] = useState<Record<string, boolean>>({});
@@ -169,6 +177,40 @@ export function XeroDashboard() {
     }
   }, [loading, summary]);
 
+  useEffect(() => {
+    if (loading || !summary || !isConnectedSummary(summary)) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadOperationsBoard() {
+      setOperationsLoading(true);
+
+      try {
+        const response = await fetch("/api/operations/board", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const data = (await response.json()) as OperationsBoard;
+
+        if (!cancelled) {
+          setOperationsBoard(data);
+        }
+      } finally {
+        if (!cancelled) {
+          setOperationsLoading(false);
+        }
+      }
+    }
+
+    loadOperationsBoard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, summary]);
+
   async function handleDisconnect() {
     setDisconnecting(true);
 
@@ -243,6 +285,41 @@ export function XeroDashboard() {
     }
   });
 
+  async function generateOutreachDraft(
+    key: string,
+    payload: { customerName: string; intent: "overdue_followup" | "retainer_pitch" | "check_in"; context: string[] },
+  ) {
+    setLoadingOutreach((prev) => ({ ...prev, [key]: true }));
+
+    try {
+      const response = await fetch("/api/ai/outreach-draft", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = (await response.json()) as { draft?: string; error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to generate outreach draft.");
+      }
+
+      setOutreachDrafts((prev) => ({
+        ...prev,
+        [key]: data.draft ?? "",
+      }));
+    } catch (error) {
+      setOutreachDrafts((prev) => ({
+        ...prev,
+        [key]: error instanceof Error ? error.message : "Unable to generate outreach draft.",
+      }));
+    } finally {
+      setLoadingOutreach((prev) => ({ ...prev, [key]: false }));
+    }
+  }
+
   const connected = isConnectedSummary(summary);
   const currencyCode = connected ? summary.organisation.baseCurrency : null;
 
@@ -284,8 +361,8 @@ export function XeroDashboard() {
   );
 
   const leakingCustomers = useMemo(
-    () => (showDemoLeakage ? [...realLeakingCustomers, ...demoLeakingCustomers] : realLeakingCustomers),
-    [realLeakingCustomers, showDemoLeakage],
+    () => (showShowcaseLeakage ? [...realLeakingCustomers, ...showcaseLeakingCustomers] : realLeakingCustomers),
+    [realLeakingCustomers, showShowcaseLeakage],
   );
 
   // Auto-trigger AI advice for leaking customers at top-level (complying with Rules of Hooks)
@@ -343,11 +420,11 @@ export function XeroDashboard() {
               ) : null}
               <Button
                 variant="outline"
-                onClick={() => setShowDemoLeakage(!showDemoLeakage)}
-                className={showDemoLeakage ? "border-rose-500/50 text-rose-400 bg-rose-500/10 hover:bg-rose-500/15" : ""}
+                onClick={() => setShowShowcaseLeakage(!showShowcaseLeakage)}
+                className={showShowcaseLeakage ? "border-rose-500/50 text-rose-400 bg-rose-500/10 hover:bg-rose-500/15" : ""}
               >
                 <Flame className="size-4 mr-1 text-rose-400" />
-                {showDemoLeakage ? "Hide Demo Leakage" : "Demo Profit Leakage"}
+                {showShowcaseLeakage ? "Hide Showcase Leakage" : "Showcase Profit Leakage"}
               </Button>
             </div>
           </CardHeader>
@@ -479,7 +556,7 @@ export function XeroDashboard() {
                     {c.isDemo ? (
                       <div className="text-xs text-[color:var(--foreground-soft)] bg-amber-500/5 rounded-xl border border-amber-500/10 p-3 leading-relaxed">
                         <span className="font-bold text-amber-400 block mb-1">AI Recommendation</span>
-                        {c.name === "Acme Corp (Demo)"
+                        {c.name === "Acme Corp"
                           ? "Support costs have eaten 95% of your margin due to 120+ unbilled hours. Action: Transition to a retained support tier of £75/hr for hours exceeding 15/month, or raise core pricing by 15% immediately."
                           : "Subcontractor margins are currently set to 30%, which is too high for Globex's volume. Action: Bring core deliverables in-house or renegotiate subcontractor rates down to a 15% cap."}
                       </div>
@@ -509,6 +586,333 @@ export function XeroDashboard() {
       {connected ? (
         <>
           <CliSeedSetup />
+          <section className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr]">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Bot className="size-4 text-[color:var(--accent)]" />
+                  <CardTitle>AI task board</CardTitle>
+                </div>
+                <CardDescription>
+                  Concrete next actions built from live Xero ledger state, with Gmail and workflow handoff built in.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {operationsLoading ? (
+                  <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-5 text-sm text-[color:var(--muted-foreground)]">
+                    Loading workflow board...
+                  </div>
+                ) : operationsBoard ? (
+                  operationsBoard.tasks.map((task) => (
+                    <div key={task.id} className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-semibold text-[color:var(--foreground)]">{task.title}</p>
+                          <p className="mt-1 text-sm leading-6 text-[color:var(--foreground-soft)]">{task.detail}</p>
+                        </div>
+                        <Badge variant="subtle">{task.xp} XP</Badge>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <EmptyState copy="No workflow tasks are available yet." />
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <ScrollText className="size-4 text-[color:var(--accent)]" />
+                  <CardTitle>Google Sheets handoff</CardTitle>
+                </div>
+                <CardDescription>
+                  Export the live workflow board into Google Sheets for ops review, collaboration, or track 2 demos.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-2xl border border-white/10 bg-black/10 p-4 text-sm leading-6 text-[color:var(--foreground-soft)]">
+                  Download a CSV generated from the same Xero-driven task board, then import it into Google Sheets or open a blank sheet directly.
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button asChild>
+                    <a href="/api/operations/sheets">
+                      Download CSV
+                      <ArrowRight className="size-4" />
+                    </a>
+                  </Button>
+                  <Button asChild variant="secondary">
+                    <a href="https://docs.google.com/spreadsheets/create" target="_blank" rel="noreferrer">
+                      Open Google Sheets
+                      <ArrowRight className="size-4" />
+                    </a>
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+
+          <section className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <ScrollText className="size-4 text-[color:var(--accent)]" />
+                  <CardTitle>Draft-to-sent invoice assistant</CardTitle>
+                </div>
+                <CardDescription>
+                  Review draft hygiene, then open Gmail directly with a customer-ready draft before sending from Xero.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                {operationsBoard?.invoiceAssistant.length ? (
+                  operationsBoard.invoiceAssistant.map((invoice) => (
+                    <div key={invoice.invoiceId} className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[color:var(--foreground)]">{invoice.contactName}</p>
+                          <p className="mt-1 text-sm text-[color:var(--foreground-soft)]">
+                            {invoice.invoiceNumber} · {formatCurrency(invoice.amountDue, currencyCode)}
+                          </p>
+                        </div>
+                        <Button asChild size="sm">
+                          <a href={invoice.gmailHref} target="_blank" rel="noreferrer">
+                            <Mail className="size-4" />
+                            Open Gmail
+                          </a>
+                        </Button>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {invoice.hygieneNotes.map((note) => (
+                          <Badge key={note} variant="subtle">
+                            {note}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <EmptyState copy="No draft invoices are waiting right now." />
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <CircleAlert className="size-4 text-[color:var(--accent)]" />
+                  <CardTitle>Overdue chase workflow</CardTitle>
+                </div>
+                <CardDescription>
+                  Prioritised chase queue with direct Gmail follow-up and AI-written drafts that keep source figures separate.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                {operationsBoard?.overdueChase.length ? (
+                  operationsBoard.overdueChase.map((invoice) => (
+                    <div key={invoice.invoiceId} className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[color:var(--foreground)]">{invoice.contactName}</p>
+                          <p className="mt-1 text-sm text-[color:var(--foreground-soft)]">
+                            {invoice.invoiceNumber} · {formatCurrency(invoice.amountDue, currencyCode)} · {invoice.daysOverdue} days overdue
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button asChild size="sm">
+                            <a href={invoice.gmailHref} target="_blank" rel="noreferrer">
+                              <Mail className="size-4" />
+                              Gmail
+                            </a>
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() =>
+                              generateOutreachDraft(invoice.invoiceId, {
+                                customerName: invoice.contactName,
+                                intent: "overdue_followup",
+                                context: [
+                                  "The customer has an overdue invoice.",
+                                  "The message should request an update and offer to resend details.",
+                                  "Keep the tone polite and practical.",
+                                ],
+                              })
+                            }
+                            disabled={loadingOutreach[invoice.invoiceId]}
+                          >
+                            {loadingOutreach[invoice.invoiceId] ? <LoaderCircle className="size-4 animate-spin" /> : <Bot className="size-4" />}
+                            AI draft
+                          </Button>
+                        </div>
+                      </div>
+                      {outreachDrafts[invoice.invoiceId] ? (
+                        <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm leading-6 text-[color:var(--foreground-soft)]">
+                          <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[color:var(--muted-foreground)]">AI draft</p>
+                          <p>{outreachDrafts[invoice.invoiceId]}</p>
+                          <p className="mt-3 text-xs text-[color:var(--muted-foreground)]">
+                            Source facts: {invoice.invoiceNumber} · {formatCurrency(invoice.amountDue, currencyCode)} · {invoice.daysOverdue} days overdue
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                ) : (
+                  <EmptyState copy="No overdue chase items are showing right now." />
+                )}
+              </CardContent>
+            </Card>
+          </section>
+
+          <section className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+            <Card>
+              <CardHeader>
+                <CardTitle>Supplier bill review queue</CardTitle>
+                <CardDescription>
+                  Bills ordered for review so timing, missing references, and due-date risk are easy to spot.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                {operationsBoard?.supplierBills.length ? (
+                  operationsBoard.supplierBills.map((bill) => (
+                    <div key={bill.invoiceId} className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-semibold text-[color:var(--foreground)]">{bill.contactName}</p>
+                          <p className="mt-1 text-sm text-[color:var(--foreground-soft)]">
+                            {bill.invoiceNumber} · {formatCurrency(bill.amountDue, currencyCode)}
+                            {bill.dueDate ? ` · due ${bill.dueDate}` : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {bill.notes.map((note) => (
+                          <Badge key={note} variant="subtle">
+                            {note}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <EmptyState copy="No supplier bills need review right now." />
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="size-4 text-[color:var(--accent)]" />
+                  <CardTitle>Tax prep assistant</CardTitle>
+                </div>
+                <CardDescription>
+                  Pre-filing and accountant-handoff checks based on the Xero data we actually have, without pretending to file tax.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                {operationsBoard?.taxChecklist.map((item) => (
+                  <div key={item.id} className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-[color:var(--foreground)]">{item.title}</p>
+                        <p className="mt-1 text-sm leading-6 text-[color:var(--foreground-soft)]">{item.detail}</p>
+                      </div>
+                      <Badge variant={item.status === "ready" ? "success" : item.status === "warning" ? "default" : "subtle"}>
+                        {item.status}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </section>
+
+          <section className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+            <Card>
+              <CardHeader>
+                <CardTitle>Follow-up priority</CardTitle>
+                <CardDescription>
+                  Clients worth contacting first, ranked from live receivables and repeat-work patterns.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                {operationsBoard?.followupTargets.length ? (
+                  operationsBoard.followupTargets.map((target) => (
+                    <div key={target.id} className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[color:var(--foreground)]">{target.customerName}</p>
+                          <p className="mt-1 text-sm text-[color:var(--foreground-soft)]">
+                            {formatCurrency(target.amountDue, currencyCode)} open · {target.invoiceCount} invoice{target.invoiceCount === 1 ? "" : "s"} · {target.repeatCount} total jobs
+                          </p>
+                          <p className="mt-2 text-sm leading-6 text-[color:var(--muted-foreground)]">{target.reason}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button asChild size="sm">
+                            <a href={target.gmailHref} target="_blank" rel="noreferrer">
+                              <Mail className="size-4" />
+                              Gmail
+                            </a>
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() =>
+                              generateOutreachDraft(target.id, {
+                                customerName: target.customerName,
+                                intent: target.retainerCandidate ? "retainer_pitch" : "check_in",
+                                context: [
+                                  target.retainerCandidate
+                                    ? "The customer shows a repeat-work pattern and may fit a recurring arrangement."
+                                    : "The customer is worth a proactive check-in based on open work and payment context.",
+                                  "Keep the message short and commercially helpful.",
+                                  "Do not include any numbers or dates.",
+                                ],
+                              })
+                            }
+                            disabled={loadingOutreach[target.id]}
+                          >
+                            {loadingOutreach[target.id] ? <LoaderCircle className="size-4 animate-spin" /> : <Bot className="size-4" />}
+                            AI draft
+                          </Button>
+                        </div>
+                      </div>
+                      {outreachDrafts[target.id] ? (
+                        <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-sm leading-6 text-[color:var(--foreground-soft)]">
+                          <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[color:var(--muted-foreground)]">AI draft</p>
+                          <p>{outreachDrafts[target.id]}</p>
+                          <p className="mt-3 text-xs text-[color:var(--muted-foreground)]">
+                            Source facts: {formatCurrency(target.amountDue, currencyCode)} open · {target.invoiceCount} open invoices · {target.overdueCount} overdue
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                ) : (
+                  <EmptyState copy="No follow-up targets are standing out yet." />
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Workflow reports</CardTitle>
+                <CardDescription>
+                  Live snapshots that match the same ledger-derived workflow board used throughout the app.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4 sm:grid-cols-2">
+                {operationsBoard?.reports.map((report) => (
+                  <div key={report.id} className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--muted-foreground)]">{report.label}</p>
+                    <p className="mt-2 text-2xl font-semibold text-[color:var(--foreground)]">{report.value}</p>
+                    <p className="mt-2 text-sm leading-6 text-[color:var(--foreground-soft)]">{report.detail}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </section>
+
           <ContractIntelligence summary={summary} />
 
           <section className="grid gap-6 lg:grid-cols-[1fr_1fr]">

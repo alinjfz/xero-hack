@@ -234,7 +234,7 @@ export function ContractIntelligence({ summary }: { summary: ConnectedSummary })
             </div>
 
             <div className="rounded-3xl border border-white/10 bg-black/10 p-5">
-              <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--muted-foreground)]">Demo prompts</p>
+              <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--muted-foreground)]">Sample prompts</p>
               <div className="mt-3 grid gap-2 text-sm leading-6 text-[color:var(--foreground-soft)]">
                 <p>Supplier overcharge: set a recurring amount lower than an open Xero bill.</p>
                 <p>Renewal risk: include auto-renewal, a notice period, and a renewal date inside 30 days.</p>
@@ -263,7 +263,7 @@ export function ContractIntelligence({ summary }: { summary: ConnectedSummary })
         <Card>
           <CardHeader>
             <CardTitle>Tracked contracts</CardTitle>
-            <CardDescription>These extracted contract profiles stay in this browser for the demo session.</CardDescription>
+            <CardDescription>These extracted contract profiles stay in this browser for the current session.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
             {contracts.length > 0 ? (

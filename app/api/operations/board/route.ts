@@ -11,16 +11,9 @@ export async function GET() {
     return NextResponse.json({ error: "Xero is not connected." }, { status: 400 });
   }
 
-  const board = buildOperationsBoard(summary);
-
-  return NextResponse.json(
-    {
-      tasks: board.tasks,
+  return NextResponse.json(buildOperationsBoard(summary), {
+    headers: {
+      "Cache-Control": "no-store",
     },
-    {
-      headers: {
-        "Cache-Control": "no-store",
-      },
-    },
-  );
+  });
 }

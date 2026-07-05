@@ -86,7 +86,7 @@ export function WorldDetailSheet({ panel, onClose }: Props) {
             </div>
             <div className="space-y-6 overflow-y-auto px-6 py-5">
               {panel.invoices.length === 0 ? (
-                <p className="text-sm text-[color:var(--world-muted)]">Nothing to show here yet. Run the seed CLI to populate demo data.</p>
+                <p className="text-sm text-[color:var(--world-muted)]">Nothing to show here yet. Load starter records or connect a tenant with active data.</p>
               ) : (
                 groupInvoices(panel.invoices).map((group) => (
                   <section key={group.key} className="space-y-3">
@@ -94,7 +94,7 @@ export function WorldDetailSheet({ panel, onClose }: Props) {
                     <ul className="space-y-2">
                       {group.items.map((invoice) => (
                         <li
-                          key={invoice.invoiceId}
+                          key={`${group.key}-${invoice.invoiceId}`}
                           className="rounded-2xl border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3"
                         >
                           <div className="flex items-start justify-between gap-3">

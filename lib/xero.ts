@@ -25,6 +25,40 @@ type StoredTokenSet = TokenSetParameters & {
   scope?: string[] | string;
 };
 
+async function refreshTokenSetDirect(params: {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+}): Promise<StoredTokenSet> {
+  const basic = Buffer.from(`${params.clientId}:${params.clientSecret}`).toString("base64");
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: params.refreshToken,
+  });
+
+  const response = await fetch("https://identity.xero.com/connect/token", {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basic}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Unable to refresh Xero token.");
+  }
+
+  const data = (await response.json()) as StoredTokenSet;
+
+  if (!data.access_token) {
+    throw new Error("Xero token refresh did not return an access token.");
+  }
+
+  return data;
+}
+
 export function getXeroConfig() {
   const clientId = process.env.XERO_CLIENT_ID;
   const clientSecret = process.env.XERO_CLIENT_SECRET;
@@ -121,6 +155,7 @@ export async function getAuthenticatedXeroClient(cookieStore: CookieStore) {
   const tokenSet = parseStoredTokenSet(cookieStore.get(XERO_TOKEN_COOKIE)?.value);
   const tenantId = cookieStore.get(XERO_TENANT_COOKIE)?.value;
   const tenantName = cookieStore.get(XERO_TENANT_NAME_COOKIE)?.value ?? "Connected tenant";
+  const config = getXeroConfig();
 
   if (!tokenSet || !tenantId) {
     return null;
@@ -132,7 +167,23 @@ export async function getAuthenticatedXeroClient(cookieStore: CookieStore) {
   let currentTokenSet = tokenSet;
 
   if (isTokenExpired(tokenSet)) {
-    const refreshedTokenSet = (await xero.refreshToken()) as StoredTokenSet;
+    let refreshedTokenSet: StoredTokenSet;
+
+    try {
+      refreshedTokenSet = (await xero.refreshToken()) as StoredTokenSet;
+    } catch {
+      if (!config.clientId || !config.clientSecret || !tokenSet.refresh_token) {
+        throw new Error("Unable to refresh Xero browser session.");
+      }
+
+      refreshedTokenSet = await refreshTokenSetDirect({
+        clientId: config.clientId,
+        clientSecret: config.clientSecret,
+        refreshToken: tokenSet.refresh_token,
+      });
+      xero.setTokenSet(toTokenSetParameters(refreshedTokenSet));
+    }
+
     currentTokenSet = refreshedTokenSet;
     saveXeroSession(cookieStore, {
       tokenSet: refreshedTokenSet,
@@ -152,17 +203,33 @@ export async function getAuthenticatedXeroClient(cookieStore: CookieStore) {
 export async function getCliAuthenticatedXeroClient() {
   const refreshToken = process.env.XERO_REFRESH_TOKEN?.trim();
   const tenantId = process.env.XERO_TENANT_ID?.trim();
+  const config = getXeroConfig();
 
   if (!refreshToken || !tenantId) {
     throw new Error("Set XERO_REFRESH_TOKEN and XERO_TENANT_ID in .env.local for CLI commands.");
   }
 
-  const xero = await createXeroClient();
-  xero.setTokenSet({
-    refresh_token: refreshToken,
-  });
+  if (!config.clientId || !config.clientSecret) {
+    throw new Error("Missing Xero client configuration.");
+  }
 
-  const tokenSet = (await xero.refreshToken()) as StoredTokenSet;
+  const xero = await createXeroClient();
+  let tokenSet: StoredTokenSet;
+
+  try {
+    xero.setTokenSet({
+      refresh_token: refreshToken,
+    });
+    tokenSet = (await xero.refreshToken()) as StoredTokenSet;
+  } catch {
+    tokenSet = await refreshTokenSetDirect({
+      clientId: config.clientId,
+      clientSecret: config.clientSecret,
+      refreshToken,
+    });
+  }
+
+  xero.setTokenSet(toTokenSetParameters(tokenSet));
 
   return {
     xero,
