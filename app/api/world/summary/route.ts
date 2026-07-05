@@ -5,5 +5,9 @@ import { getWorldSummary } from "@/lib/world-summary";
 export async function GET() {
   const cookieStore = await cookies();
   const summary = await getWorldSummary(cookieStore);
-  return NextResponse.json(summary);
+  return NextResponse.json(summary, {
+    headers: {
+      "Cache-Control": "no-store",
+    },
+  });
 }

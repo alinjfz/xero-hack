@@ -32,6 +32,8 @@ import {
   type ActiveGoal,
   type GoalType,
   saveActiveGoal,
+  loadActiveGoals,
+  saveActiveGoals,
 } from "@/lib/gamification";
 import type { OperationsBoard } from "@/lib/operations-board";
 import { pickMascotTip } from "@/lib/mascot-tips";
@@ -739,15 +741,37 @@ function buildWorldHistoryChart(
 }
 
 function buildGoalTasks(params: {
-  goalType: GoalType | null;
+  goal: ActiveGoal | null;
   board: OperationsBoard | null;
   currency: string | null;
+  summary: WorldSummaryResponse | null;
 }) {
-  if (!params.goalType || !params.board) {
+  if (!params.goal || !params.board) {
     return [] as ActionableTask[];
   }
 
-  if (params.goalType === "rent_collected") {
+  const list: ActionableTask[] = [];
+
+  // Calculate progress percent to display in the main goal task detail
+  let progressText = "";
+  if (params.summary && params.goal.type !== "custom") {
+    const progress = computeGoalProgress(params.goal, params.summary as any);
+    progressText = ` (Current progress: ${Math.round(progress.percent)}%)`;
+  }
+
+  // Add the primary goal itself to the to-do list!
+  list.push({
+    id: `goal-primary-${params.goal.type}-${params.goal.setAt}`,
+    title: `🏆 Active Goal: ${params.goal.label}`,
+    detail: params.goal.type === "custom"
+      ? `Work on achieving your custom target.`
+      : `Reach target of ${formatCurrency(params.goal.target, params.currency)}${progressText}. Complete associated tasks to progress.`,
+    location: "outside", // visible globally on outside, home, or biz scenes
+    xp: 150,
+    reason: "goal",
+  });
+
+  if (params.goal.type === "rent_collected") {
     const rentDraft = params.board.invoiceAssistant.find((item) => item.worldId === "home");
     const rentFollowup = params.board.overdueChase.find((item) => item.worldId === "home");
     const rentActions: Array<ActionableTask | null> = [
@@ -799,11 +823,9 @@ function buildGoalTasks(params: {
         : null,
     ];
 
-    return rentActions.filter((action): action is ActionableTask => Boolean(action));
-  }
-
-  if (params.goalType === "zero_overdue") {
-    return params.board.overdueChase.slice(0, 2).map((item) => ({
+    list.push(...rentActions.filter((action): action is ActionableTask => Boolean(action)));
+  } else if (params.goal.type === "zero_overdue") {
+    const overdueTasks = params.board.overdueChase.slice(0, 2).map((item) => ({
       id: `goal-action-${item.invoiceId}`,
       invoiceId: item.invoiceId,
       title: `Clear ${item.invoiceNumber}`,
@@ -812,7 +834,7 @@ function buildGoalTasks(params: {
       xp: item.risk === "high" ? 110 : 85,
       reason: "goal" as const,
       action: {
-        intent: "overdue_followup",
+        intent: "overdue_followup" as const,
         customerName: item.contactName,
         recipientEmail: contactEmailFallback(item.contactName),
         subjectHint: `Follow-up on ${item.invoiceNumber}`,
@@ -823,10 +845,9 @@ function buildGoalTasks(params: {
         ],
       },
     }));
-  }
-
-  if (params.goalType === "revenue_target") {
-    return params.board.invoiceAssistant.slice(0, 2).map((item) => ({
+    list.push(...overdueTasks);
+  } else if (params.goal.type === "revenue_target") {
+    const revenueTasks = params.board.invoiceAssistant.slice(0, 2).map((item) => ({
       id: `goal-action-${item.invoiceId}`,
       invoiceId: item.invoiceId,
       title: `Turn ${item.invoiceNumber} into live revenue`,
@@ -835,7 +856,7 @@ function buildGoalTasks(params: {
       xp: 75,
       reason: "goal" as const,
       action: {
-        intent: "invoice_send",
+        intent: "invoice_send" as const,
         customerName: item.contactName,
         recipientEmail: contactEmailFallback(item.contactName),
         subjectHint: `Invoice ready: ${item.invoiceNumber}`,
@@ -846,10 +867,9 @@ function buildGoalTasks(params: {
         ],
       },
     }));
-  }
-
-  if (params.goalType === "cash_buffer") {
-    return params.board.supplierBills.slice(0, 2).map((item) => ({
+    list.push(...revenueTasks);
+  } else if (params.goal.type === "cash_buffer") {
+    const bufferTasks = params.board.supplierBills.slice(0, 2).map((item) => ({
       id: `goal-action-${item.invoiceId}`,
       invoiceId: item.invoiceId,
       title: `Review ${item.invoiceNumber} before cash leaves`,
@@ -858,13 +878,17 @@ function buildGoalTasks(params: {
       xp: 55,
       reason: "goal" as const,
     }));
+    list.push(...bufferTasks);
+  } else {
+    const otherTasks = params.board.tasks.slice(0, 2).map((item) => ({
+      ...item,
+      title: item.title,
+      detail: item.detail,
+    }));
+    list.push(...otherTasks);
   }
 
-  return params.board.tasks.slice(0, 2).map((item) => ({
-    ...item,
-    title: item.title,
-    detail: item.detail,
-  }));
+  return list;
 }
 
 function buildHotspotStatuses(summary: Extract<WorldSummaryResponse, { connected: true }>, tasks: WorldTask[]) {
@@ -1044,7 +1068,8 @@ export function WorldView() {
   const [summary, setSummary] = useState<WorldSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [panel, setPanel] = useState<DetailPanel | null>(null);
-  const [goal, setGoal] = useState<ActiveGoal | null>(() => loadActiveGoal());
+  const [goals, setGoals] = useState<ActiveGoal[]>(() => loadActiveGoals());
+  const goal = goals[0] || null;
   const [streak, setStreak] = useState(() => loadStreakState());
   const [scene, setScene] = useState<SceneId>("outside");
   const [tasks, setTasks] = useState<WorldTask[]>([]);
@@ -1058,6 +1083,7 @@ export function WorldView() {
   const [selectedGoalLabel, setSelectedGoalLabel] = useState<string>(goal?.label ?? "");
   const [customGoalText, setCustomGoalText] = useState("");
   const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
+  const isShowcase = useMemo(() => Boolean(summary && summary.connected && summary.tenant.id === "showcase-tenant"), [summary]);
   const [earnedXp, setEarnedXp] = useState(0);
   const [draftModal, setDraftModal] = useState<DraftModalState | null>(null);
   const [draftLoadingId, setDraftLoadingId] = useState<string | null>(null);
@@ -1085,9 +1111,9 @@ export function WorldView() {
     async function load() {
       try {
         const [summaryResponse, tasksResponse, boardResponse] = await Promise.all([
-          fetch("/api/world/summary", { credentials: "include", cache: "no-store" }),
-          fetch("/api/world/tasks", { credentials: "include", cache: "no-store" }),
-          fetch("/api/operations/board", { credentials: "include", cache: "no-store" }),
+          fetch(`/api/world/summary?t=${Date.now()}`, { credentials: "include", cache: "no-store" }),
+          fetch(`/api/world/tasks?t=${Date.now()}`, { credentials: "include", cache: "no-store" }),
+          fetch(`/api/operations/board?t=${Date.now()}`, { credentials: "include", cache: "no-store" }),
         ]);
         const summaryData = (await summaryResponse.json()) as WorldSummaryResponse;
         const tasksData = (await tasksResponse.json().catch(() => ({ tasks: [] }))) as { tasks?: WorldTask[] };
@@ -1212,11 +1238,12 @@ export function WorldView() {
   const biz = summary.worlds.find((world) => world.id === "biz")!;
   const connectedSummary = summary;
   const progress = computeGoalProgress(goal, summary);
-  const goalTasks = buildGoalTasks({
-    goalType: goal?.type ?? null,
+  const goalTasks = goals.flatMap((g) => buildGoalTasks({
+    goal: g,
     board,
     currency: summary.organisation.baseCurrency,
-  });
+    summary,
+  }));
   const dedupedBoardTasks = tasks.filter(
     (task) => !task.invoiceId || !goalTasks.some((goalTask) => goalTask.invoiceId && goalTask.invoiceId === task.invoiceId),
   );
@@ -1282,8 +1309,9 @@ export function WorldView() {
       customText: selectedGoalType === "custom" ? customGoalText : undefined,
       setAt: new Date().toISOString(),
     };
-    saveActiveGoal(nextGoal);
-    setGoal(nextGoal);
+    const nextGoals = [...goals, nextGoal];
+    saveActiveGoals(nextGoals);
+    setGoals(nextGoals);
     const baseline = computeGoalProgress(nextGoal, connectedSummary);
     if (baseline.percent > 0) {
       const next = recordStreakAction("progress");
@@ -1292,6 +1320,12 @@ export function WorldView() {
       saveStreakState(streak);
     }
     setGoalModalOpen(false);
+  }
+
+  function removeGoal(setAt: string) {
+    const nextGoals = goals.filter((g) => g.setAt !== setAt);
+    saveActiveGoals(nextGoals);
+    setGoals(nextGoals);
   }
 
   async function handleGenerateDraft(task: ActionableTask) {
@@ -1705,8 +1739,16 @@ export function WorldView() {
                 Dashboard
               </Link>
             </Button>
-            <div className="rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-2">
-              <p className="text-sm font-semibold text-[color:var(--world-ink)]">{summary.organisation.name}</p>
+            <div className="rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-2 flex items-center gap-2">
+              {isShowcase && (
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                </span>
+              )}
+              <p className="text-sm font-semibold text-[color:var(--world-ink)]">
+                {summary.organisation.name} {isShowcase && "(Demo)"}
+              </p>
             </div>
           </div>
 
@@ -1739,27 +1781,49 @@ export function WorldView() {
               </div>
             </PanelShell>
 
-            <PanelShell eyebrow="Goal" title={progress.label}>
+            <PanelShell eyebrow="Goals" title={`${goals.length} Active Goal${goals.length === 1 ? "" : "s"}`}>
               <div className="space-y-4">
-                <div>
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-[color:var(--world-ink)]">
-                      {describeProgress(progress, summary.organisation.baseCurrency)}
-                    </p>
-                    <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--world-muted)]">
-                      {progress.percent}% complete
-                    </p>
-                  </div>
-                  <div className="mt-3 h-4 overflow-hidden rounded-full border border-[color:var(--world-border)] bg-[color:var(--world-panel)]">
-                    <div className="world-progress-fill h-full" style={{ width: `${progress.percent}%` }} />
-                  </div>
-                </div>
+                {goals.length === 0 ? (
+                  <p className="text-xs text-[color:var(--world-muted)]">No active goals set. Add one below!</p>
+                ) : (
+                  goals.map((g) => {
+                    const prog = computeGoalProgress(g, connectedSummary);
+                    return (
+                      <div key={g.setAt} className="border-b border-[color:var(--world-border)]/30 pb-3 last:border-0 last:pb-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-[color:var(--world-ink)] truncate max-w-[190px]" title={g.label}>
+                            {g.label}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => removeGoal(g.setAt)}
+                            className="rounded p-1 text-[color:var(--world-muted)] hover:bg-white/5 hover:text-red-400 transition"
+                            title="Remove Goal"
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        </div>
+                        <div className="mt-1.5 flex items-center justify-between gap-3">
+                          <p className="text-xs text-[color:var(--world-muted)]">
+                            {describeProgress(prog, summary.organisation.baseCurrency)}
+                          </p>
+                          <p className="text-[10px] uppercase tracking-[0.1em] text-[color:var(--world-muted)] font-medium">
+                            {Math.round(prog.percent)}% complete
+                          </p>
+                        </div>
+                        <div className="mt-2 h-2 overflow-hidden rounded-full border border-[color:var(--world-border)]/50 bg-[color:var(--world-panel)]">
+                          <div className="world-progress-fill h-full" style={{ width: `${prog.percent}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
                 <Button
                   type="button"
                   onClick={openGoalModal}
                   className="w-full rounded-[16px] bg-[color:var(--world-accent)] text-[#1d140d] hover:bg-[color:var(--world-accent-2)]"
                 >
-                  Set New Goal
+                  + Add Goal
                 </Button>
               </div>
             </PanelShell>
@@ -1810,9 +1874,32 @@ export function WorldView() {
                     </Button>
                   ) : null}
                   <StatChip
-                    label={scene === "home" ? "Rent open" : scene === "biz" ? "Invoices open" : "Open due"}
-                    value={sceneSummaryValue()}
-                    tone={scene === "outside" && summary.combined.overdueCount > 0 ? "danger" : "accent"}
+                    label={scene === "home" ? "Rent open" : scene === "biz" ? "Invoices open" : "Open receivables"}
+                    value={
+                      scene === "home"
+                        ? formatCurrency(home.metrics.receivables, connectedSummary.organisation.baseCurrency)
+                        : scene === "biz"
+                          ? formatCurrency(biz.metrics.receivables, connectedSummary.organisation.baseCurrency)
+                          : formatCurrency(totalReceivables, connectedSummary.organisation.baseCurrency)
+                    }
+                    tone="accent"
+                  />
+                  <StatChip
+                    label={scene === "home" ? "Rent overdue" : scene === "biz" ? "Invoices overdue" : "Overdue now"}
+                    value={
+                      scene === "home"
+                        ? formatCurrency(home.metrics.overdue, connectedSummary.organisation.baseCurrency)
+                        : scene === "biz"
+                          ? formatCurrency(biz.metrics.overdue, connectedSummary.organisation.baseCurrency)
+                          : formatCurrency(connectedSummary.metrics.overdueAmount, connectedSummary.organisation.baseCurrency)
+                    }
+                    tone={
+                      (scene === "home" && home.metrics.overdue > 0) ||
+                      (scene === "biz" && biz.metrics.overdue > 0) ||
+                      (scene === "outside" && connectedSummary.metrics.overdueAmount > 0)
+                        ? "danger"
+                        : "default"
+                    }
                   />
                 </div>
               </div>

@@ -65,11 +65,26 @@ function writeJson<T>(key: string, value: T) {
 }
 
 export function loadActiveGoal(): ActiveGoal | null {
-  return readJson<ActiveGoal | null>(GOAL_KEY, null);
+  const raw = readJson<any>(GOAL_KEY, null);
+  if (!raw) return null;
+  if (Array.isArray(raw)) return raw[0] || null;
+  return raw as ActiveGoal;
 }
 
 export function saveActiveGoal(goal: ActiveGoal) {
   writeJson(GOAL_KEY, goal);
+  writeJson(BASELINE_KEY, null);
+}
+
+export function loadActiveGoals(): ActiveGoal[] {
+  const raw = readJson<any>(GOAL_KEY, null);
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw as ActiveGoal[];
+  return [raw as ActiveGoal];
+}
+
+export function saveActiveGoals(goals: ActiveGoal[]) {
+  writeJson(GOAL_KEY, goals);
   writeJson(BASELINE_KEY, null);
 }
 

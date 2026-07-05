@@ -27,6 +27,9 @@ export async function GET(request: Request) {
       tenantName: tenant.tenantName ?? "Connected tenant",
     });
 
+    // Delete the showcase disabled flag now that they have successfully connected
+    cookieStore.delete("kish_showcase_disabled");
+
     return NextResponse.redirect(new URL("/", request.url));
   } catch (error) {
     const url = new URL("/", request.url);

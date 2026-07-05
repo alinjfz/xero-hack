@@ -148,13 +148,21 @@ type BrowserCookieStore = Parameters<typeof getAuthenticatedXeroClient>[0];
 async function getAccountCodes(xero: Awaited<ReturnType<typeof createXeroClient>>, tenantId: string) {
   const response = await xero.accountingApi.getAccounts(tenantId);
   const accounts = response.body.accounts ?? [];
+  
   const revenue =
-    accounts.find((account) => String(account.type) === "REVENUE" && account.code)?.code ??
-    accounts.find((account) => account.code)?.code ??
+    accounts.find((a) => String(a.type) === "REVENUE" && String(a.status) === "ACTIVE" && !a.systemAccount && a.code)?.code ??
+    accounts.find((a) => String(a.type) === "REVENUE" && a.code)?.code ??
     "200";
+
   const expense =
-    accounts.find((account) => String(account.type) === "EXPENSE" && account.code)?.code ??
-    accounts.find((account) => account.code)?.code ??
+    accounts.find((a) => 
+      (String(a.type) === "EXPENSE" || String(a.type) === "DIRECTCOSTS") && 
+      String(a.status) === "ACTIVE" && 
+      !a.systemAccount && 
+      a.code && 
+      a.code !== "497"
+    )?.code ??
+    accounts.find((a) => String(a.type) === "EXPENSE" && a.code)?.code ??
     "400";
 
   return { revenue: String(revenue), expense: String(expense) };
@@ -205,7 +213,7 @@ function buildInvoicePayload(seed: SeedInvoice, contactId: string, accountCode: 
     type: seed.type === "ACCREC" ? Invoice.TypeEnum.ACCREC : Invoice.TypeEnum.ACCPAY,
     contact: { contactID: contactId },
     reference: seed.reference,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: LineAmountTypes.NoTax,
     date: seed.issueDate,
     dueDate: seed.dueDate ?? seed.issueDate,
     lineItems: [
@@ -232,25 +240,29 @@ async function markInvoicePaid(
   tenantId: string,
   invoiceId: string,
 ) {
-  const paymentsResponse = await xero.accountingApi.getPayments(tenantId, undefined, undefined, undefined, 1);
-  const accountId = paymentsResponse.body.payments?.[0]?.account?.accountID;
+  try {
+    const paymentsResponse = await xero.accountingApi.getPayments(tenantId, undefined, undefined, undefined, 1);
+    const accountId = paymentsResponse.body.payments?.[0]?.account?.accountID;
 
-  if (!accountId) {
-    return;
+    if (!accountId) {
+      return;
+    }
+
+    const invoiceResponse = await xero.accountingApi.getInvoice(tenantId, invoiceId);
+    const invoice = invoiceResponse.body.invoices?.[0];
+    if (!invoice?.total) {
+      return;
+    }
+
+    await xero.accountingApi.createPayment(tenantId, {
+      invoice: { invoiceID: invoiceId },
+      account: { accountID: accountId },
+      amount: invoice.total,
+      date: new Date().toISOString().split("T")[0],
+    });
+  } catch {
+    // Gracefully continue even if payment recording is restricted
   }
-
-  const invoiceResponse = await xero.accountingApi.getInvoice(tenantId, invoiceId);
-  const invoice = invoiceResponse.body.invoices?.[0];
-  if (!invoice?.total) {
-    return;
-  }
-
-  await xero.accountingApi.createPayment(tenantId, {
-    invoice: { invoiceID: invoiceId },
-    account: { accountID: accountId },
-    amount: invoice.total,
-    date: new Date().toISOString().split("T")[0],
-  });
 }
 
 async function resetDemoDataForSession(session: ActiveSession) {
@@ -270,16 +282,34 @@ async function resetDemoDataForSession(session: ActiveSession) {
       continue;
     }
 
-    if (invoice.status === Invoice.StatusEnum.DRAFT) {
+    try {
+      // Delete allocated payments if present, so we can void the invoice
+      const payments = invoice.payments ?? [];
+      for (const payment of payments) {
+        if (payment.paymentID) {
+          try {
+            await xero.accountingApi.deletePayment(tenantId, payment.paymentID, {
+              status: "DELETED",
+            });
+          } catch {
+            // Ignore payment deletion errors
+          }
+        }
+      }
+
+      if (invoice.status === Invoice.StatusEnum.DRAFT) {
+        await xero.accountingApi.updateInvoice(tenantId, invoice.invoiceID, {
+          invoices: [{ invoiceID: invoice.invoiceID, status: Invoice.StatusEnum.DELETED }],
+        });
+        continue;
+      }
+
       await xero.accountingApi.updateInvoice(tenantId, invoice.invoiceID, {
         invoices: [{ invoiceID: invoice.invoiceID, status: Invoice.StatusEnum.VOIDED }],
       });
-      continue;
+    } catch {
+      // Robustly continue even if a specific invoice fails to reset
     }
-
-    await xero.accountingApi.updateInvoice(tenantId, invoice.invoiceID, {
-      invoices: [{ invoiceID: invoice.invoiceID, status: Invoice.StatusEnum.VOIDED }],
-    });
   }
 
   return candidates.length;

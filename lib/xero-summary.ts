@@ -124,6 +124,8 @@ export type SummaryResponse =
         configured: boolean;
         model: string | null;
       };
+      rateLimited?: boolean;
+      retryAfter?: number;
     };
 
 type InvoiceSummary = {
@@ -137,6 +139,8 @@ type InvoiceSummary = {
   currencyCode?: string;
   dateString?: string;
   dueDateString?: string;
+  date?: string | Date;
+  dueDate?: string | Date;
   contact?: {
     name?: string;
   };
@@ -162,10 +166,33 @@ type AccountingInvoicesApi = {
 
 type ConnectedSummary = Extract<SummaryResponse, { connected: true }>;
 
+function parseXeroDate(val: string | Date | undefined | null): Date | null {
+  if (!val) {
+    return null;
+  }
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? null : val;
+  }
+  
+  const valStr = String(val).trim();
+  const match = /\/Date\((\d+)/.exec(valStr);
+  if (match) {
+    return new Date(parseInt(match[1], 10));
+  }
+  
+  const parsed = new Date(valStr);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function normaliseInvoice(invoice: InvoiceSummary): InvoiceSnapshot {
   const now = new Date();
-  const dueDate = invoice.dueDateString ?? null;
-  const parsedDueDate = dueDate ? new Date(dueDate) : null;
+  
+  const parsedDueDate = parseXeroDate(invoice.dueDateString ?? invoice.dueDate);
+  const parsedIssueDate = parseXeroDate(invoice.dateString ?? invoice.date);
+  
+  const dueDateStr = parsedDueDate ? parsedDueDate.toISOString().split("T")[0] : null;
+  const issueDateStr = parsedIssueDate ? parsedIssueDate.toISOString().split("T")[0] : null;
+
   const isOverdue = Boolean(parsedDueDate && parsedDueDate < now && (invoice.amountDue ?? 0) > 0);
   const daysOverdue = parsedDueDate
     ? Math.max(0, Math.floor((now.getTime() - parsedDueDate.getTime()) / (1000 * 60 * 60 * 24)))
@@ -179,8 +206,8 @@ function normaliseInvoice(invoice: InvoiceSummary): InvoiceSnapshot {
     amountDue: invoice.amountDue ?? 0,
     total: invoice.total ?? 0,
     currency: invoice.currencyCode ? String(invoice.currencyCode) : null,
-    issueDate: invoice.dateString ?? null,
-    dueDate,
+    issueDate: issueDateStr,
+    dueDate: dueDateStr,
     status: invoice.status ?? "UNKNOWN",
     isOverdue,
     daysOverdue,
@@ -784,6 +811,12 @@ export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<Summ
   const config = getXeroConfig();
   const openRouter = getOpenRouterConfig();
 
+  // Check for developer bypass cookie to force showcase mode even when real APIs are rate-limited or disconnected
+  const forceShowcase = cookieStore.get("kish_force_showcase")?.value === "true";
+  if (forceShowcase) {
+    return buildShowcaseSummary(openRouter);
+  }
+
   if (!config.isConfigured) {
     return {
       configured: false,
@@ -796,6 +829,14 @@ export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<Summ
   const session = await getAuthenticatedXeroClient(cookieStore);
 
   if (!session) {
+    const isShowcaseDisabled = cookieStore.get("kish_showcase_disabled")?.value === "true";
+    if (isShowcaseDisabled) {
+      return {
+        configured: true,
+        connected: false,
+        openRouter,
+      };
+    }
     return buildShowcaseSummary(openRouter);
   }
 
@@ -833,13 +874,62 @@ export async function getXeroSummary(cookieStore: CookieStoreLike): Promise<Summ
       openRouter,
     });
 
-    if (!hasMeaningfulLedger(liveSummary)) {
-      return buildShowcaseSummary(openRouter, liveSummary.organisation.name);
+    return liveSummary;
+  } catch (error: any) {
+    console.error("getXeroSummary error:", error);
+    
+    const isRateLimited = error.response?.statusCode === 429 || error.statusCode === 429;
+    if (isRateLimited) {
+      const retryAfterRaw = error.response?.headers?.["retry-after"] || error.headers?.["retry-after"];
+      const showcase = buildShowcaseSummary(openRouter);
+      return {
+        ...showcase,
+        rateLimited: true,
+        retryAfter: retryAfterRaw ? parseInt(String(retryAfterRaw), 10) : undefined,
+      };
     }
 
-    return liveSummary;
-  } catch {
-    clearXeroSession(cookieStore);
-    return buildShowcaseSummary(openRouter);
+    return {
+      configured: true,
+      connected: false,
+      error: getXeroErrorMessage(error),
+      openRouter,
+    };
   }
+}
+
+function getXeroErrorMessage(error: any): string {
+  if (!error) return "Unknown error connecting to Xero.";
+
+  try {
+    const errStr = typeof error === "string" ? error : JSON.stringify(error);
+    
+    if (errStr.includes("429") || errStr.includes("rate_limit")) {
+      return "Xero API rate limit reached. KISH has paused syncing. Please wait for cooldown.";
+    }
+    if (errStr.includes("invalid_grant") || errStr.includes("expired") || errStr.includes("token_expired")) {
+      return "Your Xero session has expired. Please click disconnect and reconnect.";
+    }
+    if (errStr.includes("401") || errStr.includes("unauthorized")) {
+      return "Authorization failed. Please try reconnecting to your Xero tenant.";
+    }
+    if (errStr.includes("ENOTFOUND") || errStr.includes("fetch failed") || errStr.includes("ECONNREFUSED")) {
+      return "Network connection issue. KISH was unable to reach Xero servers.";
+    }
+  } catch {}
+
+  // If there's a short response body message, use it
+  if (error.response?.body) {
+    const body = error.response.body;
+    if (typeof body === "object") {
+      if (body.Message) return String(body.Message);
+      if (body.message) return String(body.message);
+    }
+  }
+
+  if (error.message) {
+    return error.message.length > 80 ? `${error.message.substring(0, 77)}...` : error.message;
+  }
+
+  return "Xero connection issue. Please click disconnect and try reconnecting.";
 }

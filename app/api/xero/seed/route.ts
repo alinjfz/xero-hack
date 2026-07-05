@@ -30,9 +30,29 @@ export async function POST(request: Request) {
       created,
     });
   } catch (error) {
+    console.error("Xero Seed Error:", error);
+    let message = "Unable to write starter data into Xero.";
+    if (error instanceof Error) {
+      message = error.message;
+    }
+    
+    // Extract Xero API validation error details if available
+    const xeroError = error as { response?: { body?: unknown } };
+    if (xeroError.response?.body) {
+      console.error("Xero API Error Details:", JSON.stringify(xeroError.response.body, null, 2));
+      try {
+        const bodyStr = typeof xeroError.response.body === "string" 
+          ? xeroError.response.body 
+          : JSON.stringify(xeroError.response.body);
+        message += ` (Details: ${bodyStr})`;
+      } catch {
+        // Fallback
+      }
+    }
+
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "Unable to write starter data into Xero.",
+        error: message,
       },
       { status: 500 },
     );

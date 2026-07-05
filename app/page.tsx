@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { XeroDashboard } from "@/components/xero-dashboard";
+import { BypassToggle } from "@/components/bypass-toggle";
 
 export default function HomePage() {
   return (
@@ -17,11 +18,11 @@ export default function HomePage() {
               Knowledge & Intelligent SME Hub for owners who want their Xero data turned into readable priorities.
             </p>
           </div>
-          <div className="text-sm leading-6 text-[color:var(--muted-foreground)]">
-            <p>Stack: Next.js 16.2.10, TypeScript, Tailwind CSS v4, Xero OAuth 2.0, optional OpenRouter brief generation</p>
-          </div>
         </header>
-        <XeroDashboard />
+        <div className="flex-1">
+          <XeroDashboard />
+        </div>
+        <BypassToggle />
       </div>
     </main>
   );

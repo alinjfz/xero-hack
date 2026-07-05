@@ -54,5 +54,6 @@ export function getWorldForRecord(params: {
     return "biz";
   }
 
-  return "shared";
+  // Default unclassified real Xero records to the "biz" (small business) world so real data is never lost or excluded from `/world`!
+  return "biz";
 }

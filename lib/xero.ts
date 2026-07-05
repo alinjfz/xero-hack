@@ -185,11 +185,15 @@ export async function getAuthenticatedXeroClient(cookieStore: CookieStore) {
     }
 
     currentTokenSet = refreshedTokenSet;
-    saveXeroSession(cookieStore, {
-      tokenSet: refreshedTokenSet,
-      tenantId,
-      tenantName,
-    });
+    try {
+      saveXeroSession(cookieStore, {
+        tokenSet: refreshedTokenSet,
+        tenantId,
+        tenantName,
+      });
+    } catch (cookieError) {
+      console.warn("Could not save refreshed cookie session in GET handler:", cookieError);
+    }
   }
 
   return {
