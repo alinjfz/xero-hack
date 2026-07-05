@@ -18,7 +18,7 @@ import {
   Warehouse,
   X,
 } from "lucide-react";
-import { WorldDetailSheet, type DetailPanel } from "@/components/world/world-detail-sheet";
+import { WorldDetailSheet, type DetailAction, type DetailPanel } from "@/components/world/world-detail-sheet";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/format-currency";
 import {
@@ -35,6 +35,7 @@ import {
 import type { OperationsBoard } from "@/lib/operations-board";
 import { pickMascotTip } from "@/lib/mascot-tips";
 import type { WorldSummaryResponse } from "@/lib/world-summary";
+import { getWorldForRecord } from "@/lib/world-tags";
 
 type SceneId = "outside" | "home" | "biz";
 type PanelTarget =
@@ -290,10 +291,12 @@ function buildPanel(
   const uniqueInvoices = (invoices: Array<(typeof home.receivables)[number]>) =>
     invoices.filter((invoice, index, all) => all.findIndex((entry) => entry.invoiceId === invoice.invoiceId) === index);
   const homeNetSpread = home.metrics.revenueThisMonth - home.metrics.billsDue;
+  const homeHistory = buildWorldHistoryChart(summary, "home");
   const sharedTaxItems = board?.taxChecklist.filter((item) => item.worldId === "both") ?? [];
   const bizTaxItems = board?.taxChecklist.filter((item) => item.worldId === "biz" || item.worldId === "both") ?? [];
   const followupTargets = board?.followupTargets.filter((item) => item.worldId === "biz" || item.worldId === "shared") ?? [];
   const growthReports = board?.reports ?? [];
+  const homeOverdue = home.overdue[0];
 
   const panels: Record<PanelTarget, DetailPanel> = {
     mailbox: {
@@ -304,6 +307,7 @@ function buildPanel(
       subtitle: "What needs a reminder before cash slips further",
       invoices: uniqueInvoices([...home.overdue, ...home.dueSoon, ...biz.overdue, ...biz.dueSoon]),
       currency,
+      invoiceActions: "primary",
     },
     "home-rent": {
       target: "home-rent",
@@ -313,6 +317,7 @@ function buildPanel(
       subtitle: "Open rent invoices and late rent",
       invoices: uniqueInvoices([...home.receivables, ...home.overdue]),
       currency,
+      invoiceActions: "primary",
     },
     "home-bills": {
       target: "home-bills",
@@ -322,6 +327,13 @@ function buildPanel(
       subtitle: "Incoming costs for the property side",
       invoices: home.payables,
       currency,
+      invoiceActions: "none",
+      actions: [
+        {
+          id: "add-property-bill",
+          label: "Add property bill",
+        },
+      ],
     },
     "home-outlook": {
       target: "home-outlook",
@@ -331,6 +343,10 @@ function buildPanel(
       subtitle: "Visible rent, bill pressure, and source-backed next moves",
       invoices: [],
       currency,
+      actions: [
+        { id: "download-operations-csv", label: "Download CSV" },
+        { id: "open-google-sheets", label: "Open Google Sheets" },
+      ],
       sections: [
         {
           key: "home-outlook-metrics",
@@ -368,15 +384,39 @@ function buildPanel(
                 home.overdue.length > 0
                   ? `${home.overdue.length} property invoice${home.overdue.length === 1 ? "" : "s"} are already overdue and should be chased before reviewing lower-pressure items.`
                   : "No overdue property invoices are showing right now.",
+              action: homeOverdue
+                ? {
+                    id: `draft-overdue:${homeOverdue.invoiceId}`,
+                    label: "Draft chase",
+                    meta: { invoiceId: homeOverdue.invoiceId },
+                  }
+                : undefined,
             },
             {
               label: "True ROI needs one more input",
               detail:
                 "Xero gives us rent and bill flows, but true ROI also needs property value and financing cost. Add those later to unlock a proper yield/ROI board.",
+              action: {
+                id: "open-google-sheets",
+                label: "Open Sheets model",
+              },
             },
           ],
         },
+        {
+          key: "home-outlook-history",
+          title: "Recent history",
+          items: home.recentActivity.map((activity) => ({
+            label: activity.label,
+            detail: activity.when ? `Recorded ${activity.when}` : "Date not available from source.",
+            value: formatCurrency(activity.amount, currency),
+          })),
+        },
       ],
+      chart: {
+        title: "Property history",
+        bars: homeHistory,
+      },
     },
     "home-tax": {
       target: "home-tax",
@@ -386,6 +426,10 @@ function buildPanel(
       subtitle: "What to review before self-assessment or accountant handoff",
       invoices: [],
       currency,
+      actions: [
+        { id: "download-operations-csv", label: "Download checklist CSV" },
+        { id: "open-google-sheets", label: "Open Google Sheets" },
+      ],
       sections: [
         {
           key: "home-tax-items",
@@ -394,6 +438,14 @@ function buildPanel(
             label: item.title,
             detail: item.detail,
             value: String(item.count),
+            action:
+              item.id === "tax-bills"
+                ? { id: "open-panel:home-bills", label: "Review bills" }
+                : item.id === "tax-drafts"
+                  ? { id: "open-panel:biz-drafts", label: "Review drafts" }
+                  : item.id === "tax-handoff" || item.id === "tax-missing-ref"
+                    ? { id: "download-operations-csv", label: "Export checklist" }
+                    : undefined,
           })),
         },
       ],
@@ -406,6 +458,7 @@ function buildPanel(
       subtitle: "Client invoices still awaiting payment",
       invoices: biz.receivables,
       currency,
+      invoiceActions: "primary",
     },
     "biz-drafts": {
       target: "biz-drafts",
@@ -415,6 +468,7 @@ function buildPanel(
       subtitle: "Items ready to turn into live receivables",
       invoices: biz.drafts,
       currency,
+      invoiceActions: "primary",
     },
     "biz-bills": {
       target: "biz-bills",
@@ -424,6 +478,7 @@ function buildPanel(
       subtitle: "Bills the business still needs to handle",
       invoices: biz.payables,
       currency,
+      invoiceActions: "primary",
     },
     "biz-revenue": {
       target: "biz-revenue",
@@ -433,6 +488,7 @@ function buildPanel(
       subtitle: formatCurrency(biz.metrics.revenueThisMonth, currency),
       invoices: biz.receivables,
       currency,
+      invoiceActions: "primary",
     },
     "biz-tax": {
       target: "biz-tax",
@@ -442,6 +498,10 @@ function buildPanel(
       subtitle: "Source-backed checks before tax prep or accountant handoff",
       invoices: [],
       currency,
+      actions: [
+        { id: "download-operations-csv", label: "Download checklist CSV" },
+        { id: "open-google-sheets", label: "Open Google Sheets" },
+      ],
       sections: [
         {
           key: "biz-tax-items",
@@ -450,6 +510,14 @@ function buildPanel(
             label: item.title,
             detail: item.detail,
             value: String(item.count),
+            action:
+              item.id === "tax-drafts"
+                ? { id: "open-panel:biz-drafts", label: "Review drafts" }
+                : item.id === "tax-bills"
+                  ? { id: "open-panel:biz-bills", label: "Review bills" }
+                  : item.id === "tax-due-risk"
+                    ? { id: "open-panel:biz-receivables", label: "Set due dates" }
+                    : { id: "download-operations-csv", label: "Export checklist" },
           })),
         },
       ],
@@ -462,6 +530,10 @@ function buildPanel(
       subtitle: "Who to follow up first and what the ledger suggests next",
       invoices: [],
       currency,
+      actions: [
+        { id: "download-operations-csv", label: "Download follow-up CSV" },
+        { id: "open-google-sheets", label: "Open Google Sheets" },
+      ],
       sections: [
         {
           key: "biz-followup-targets",
@@ -470,6 +542,14 @@ function buildPanel(
             label: target.customerName,
             detail: target.reason,
             value: formatCurrency(target.amountDue, currency),
+            action: {
+              id: `draft-followup:${target.customerName}`,
+              label: target.retainerCandidate ? "Draft retainer note" : "Draft outreach",
+              meta: {
+                customerName: target.customerName,
+                retainerCandidate: target.retainerCandidate ? "true" : "false",
+              },
+            },
           })),
         },
         {
@@ -580,6 +660,55 @@ function sceneIdForWorld(worldId: "home" | "biz" | "shared"): SceneId {
   }
 
   return "outside";
+}
+
+function monthLabel(date: Date) {
+  return date.toLocaleString("en-GB", { month: "short" });
+}
+
+function buildWorldHistoryChart(
+  summary: Extract<WorldSummaryResponse, { connected: true }>,
+  worldId: "home" | "biz",
+) {
+  const now = new Date();
+  const buckets = Array.from({ length: 4 }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (3 - index), 1);
+    return {
+      key: `${date.getFullYear()}-${date.getMonth()}`,
+      label: monthLabel(date),
+      income: 0,
+      expense: 0,
+    };
+  });
+  const map = new Map(buckets.map((bucket) => [bucket.key, bucket]));
+
+  for (const invoice of summary.invoices.allReceivables) {
+    if (getWorldForRecord({ contactName: invoice.contactName, reference: invoice.reference }) !== worldId || !invoice.issueDate) {
+      continue;
+    }
+
+    const date = new Date(invoice.issueDate);
+    const key = `${date.getFullYear()}-${date.getMonth()}`;
+    const bucket = map.get(key);
+    if (bucket) {
+      bucket.income += invoice.total;
+    }
+  }
+
+  for (const bill of summary.invoices.allPayables) {
+    if (getWorldForRecord({ contactName: bill.contactName, reference: bill.reference }) !== worldId || !bill.issueDate) {
+      continue;
+    }
+
+    const date = new Date(bill.issueDate);
+    const key = `${date.getFullYear()}-${date.getMonth()}`;
+    const bucket = map.get(key);
+    if (bucket) {
+      bucket.expense += bill.total;
+    }
+  }
+
+  return buckets;
 }
 
 function buildGoalTasks(params: {
@@ -871,6 +1000,16 @@ export function WorldView() {
   const [draftModal, setDraftModal] = useState<DraftModalState | null>(null);
   const [draftLoadingId, setDraftLoadingId] = useState<string | null>(null);
   const [invoiceActionLoadingId, setInvoiceActionLoadingId] = useState<string | null>(null);
+  const [billModalOpen, setBillModalOpen] = useState(false);
+  const [billSubmitting, setBillSubmitting] = useState(false);
+  const [billForm, setBillForm] = useState({
+    contactName: "",
+    email: "",
+    reference: "",
+    description: "",
+    amount: "",
+    dueDate: "",
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -1185,6 +1324,18 @@ export function WorldView() {
       return "Authorise in Xero";
     }
 
+    if (sourcePanel.target === "home-bills") {
+      return null;
+    }
+
+    if (sourcePanel.target === "biz-receivables" || sourcePanel.target === "mailbox" || sourcePanel.target === "biz-revenue") {
+      return sourcePanel.worldId === "home" ? "Draft rent chase" : "Draft chase";
+    }
+
+    if (sourcePanel.target === "biz-bills") {
+      return "Review in Xero";
+    }
+
     return getTaskActionLabel(buildInvoiceTask(invoice, sourcePanel));
   }
 
@@ -1213,9 +1364,103 @@ export function WorldView() {
     handleTaskAction(buildInvoiceTask(invoice, sourcePanel));
   }
 
-  function handleOpenTaskFromPanel(invoice: DetailPanel["invoices"][number], sourcePanel: DetailPanel) {
-    setPanel(null);
-    openTaskArea(buildInvoiceTask(invoice, sourcePanel));
+  function handleDetailAction(action: DetailAction, sourcePanel: DetailPanel) {
+    if (action.id === "open-google-sheets") {
+      window.open("https://docs.google.com/spreadsheets/create", "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    if (action.id === "download-operations-csv") {
+      window.open("/api/operations/sheets", "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    if (action.id === "add-property-bill") {
+      setBillModalOpen(true);
+      return;
+    }
+
+    if (action.id.startsWith("open-panel:")) {
+      const target = action.id.replace("open-panel:", "") as PanelTarget;
+      setPanel(buildPanel(connectedSummary, target, board));
+      if (target.startsWith("home")) {
+        setScene("home");
+      } else if (target.startsWith("biz")) {
+        setScene("biz");
+      }
+      return;
+    }
+
+    if (action.id.startsWith("draft-overdue:")) {
+      const invoiceId = action.meta?.invoiceId;
+      const invoice = sourcePanel.invoices.find((entry) => entry.invoiceId === invoiceId);
+      if (invoice) {
+        void handleInvoicePrimaryAction(invoice, {
+          ...sourcePanel,
+          target: sourcePanel.worldId === "home" ? "home-rent" : "biz-receivables",
+        });
+      }
+      return;
+    }
+
+    if (action.id.startsWith("draft-followup:")) {
+      const customerName = action.meta?.customerName;
+      const retainerCandidate = action.meta?.retainerCandidate === "true";
+      const target = board?.followupTargets.find((item) => item.customerName === customerName);
+
+      if (!target || !customerName) {
+        return;
+      }
+
+      void handleGenerateDraft({
+        id: `followup-${customerName}`,
+        title: retainerCandidate ? `Pitch ${customerName} on a retainer` : `Follow up ${customerName}`,
+        detail: target.reason,
+        location: "biz",
+        xp: 70,
+        reason: "followup",
+        action: {
+          intent: retainerCandidate ? "retainer_pitch" : "check_in",
+          customerName,
+          recipientEmail: contactEmailFallback(customerName),
+          subjectHint: retainerCandidate ? `A smoother recurring setup for ${customerName}` : `Quick follow-up for ${customerName}`,
+          context: [
+            target.reason,
+            retainerCandidate
+              ? "Suggest a recurring or retainer arrangement, but keep it grounded in the ongoing work pattern."
+              : "Write a proactive, commercially helpful follow-up based on open work and repeat business.",
+            "Do not invent any numbers in the draft.",
+          ],
+        },
+      });
+    }
+  }
+
+  async function handleCreatePropertyBill() {
+    setBillSubmitting(true);
+
+    try {
+      const response = await fetch("/api/xero/bills", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          ...billForm,
+          amount: Number(billForm.amount),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to add property bill to Xero.");
+      }
+
+      setBillModalOpen(false);
+      window.location.reload();
+    } finally {
+      setBillSubmitting(false);
+    }
   }
 
   function openTaskArea(task: ActionableTask) {
@@ -1374,39 +1619,6 @@ export function WorldView() {
               </div>
             </PanelShell>
 
-            <PanelShell eyebrow="Tax" title="Self-assessment readiness">
-              <div className="space-y-3">
-                {(board?.taxChecklist ?? []).slice(0, 4).map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-[color:var(--world-ink)]">{item.title}</p>
-                        <p className="mt-1 text-xs leading-6 text-[color:var(--world-muted)]">{item.detail}</p>
-                      </div>
-                      <span
-                        className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${
-                          item.status === "ready"
-                            ? "bg-[rgba(107,196,127,0.14)] text-[color:var(--world-ink)]"
-                            : item.status === "warning"
-                              ? "bg-[rgba(245,110,76,0.14)] text-[color:var(--world-ink)]"
-                              : "bg-[rgba(246,200,90,0.16)] text-[color:var(--world-ink)]"
-                        }`}
-                      >
-                        {item.status}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-                {!board?.taxChecklist?.length ? (
-                  <div className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-sm text-[color:var(--world-muted)]">
-                    Connect more Xero data to unlock filing prep checks, reference hygiene, and accountant handoff tasks.
-                  </div>
-                ) : null}
-              </div>
-            </PanelShell>
           </div>
 
           <div className="order-1 flex min-h-[420px] flex-col xl:order-2">
@@ -1556,7 +1768,7 @@ export function WorldView() {
                             : "border-[color:var(--world-border)] bg-[color:var(--world-card)]"
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-3">
+                        <div>
                           <div>
                             <p className="text-sm font-semibold text-[color:var(--world-ink)]">{task.title}</p>
                             <p className="mt-1 text-xs leading-6 text-[color:var(--world-muted)]">{task.detail}</p>
@@ -1564,8 +1776,8 @@ export function WorldView() {
                               {sceneTaskLabel(task.location)} · {task.xp} XP
                             </p>
                           </div>
-                          <div className="flex shrink-0 flex-col items-end gap-2">
-                            <div className="flex items-center gap-2">
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleTaskAction(task)}
@@ -1574,15 +1786,8 @@ export function WorldView() {
                               >
                                 {draftLoadingId === task.id && task.action ? "Generating..." : getTaskActionLabel(task)}
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => openTaskArea(task)}
-                                className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-panel)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card-strong)]"
-                              >
-                                Open task
-                              </button>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleResolveTask(task)}
@@ -1763,12 +1968,97 @@ export function WorldView() {
         ) : null}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {billModalOpen ? (
+          <>
+            <motion.button
+              type="button"
+              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setBillModalOpen(false)}
+            />
+            <motion.div
+              className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-[color:var(--world-border)] bg-[color:var(--world-panel)] shadow-2xl"
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 380, damping: 36 }}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-[color:var(--world-border)] px-6 py-5">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--world-muted)]">New property bill</p>
+                  <h2 className="font-[family-name:var(--font-display)] text-2xl text-[color:var(--world-ink)]">Add bill to Xero</h2>
+                  <p className="mt-1 text-sm text-[color:var(--world-muted)]">Create a property-side bill directly from the house view.</p>
+                </div>
+                <Button variant="secondary" size="sm" onClick={() => setBillModalOpen(false)}>
+                  <X className="size-4" />
+                </Button>
+              </div>
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+                <input
+                  value={billForm.contactName}
+                  onChange={(event) => setBillForm((current) => ({ ...current, contactName: event.target.value }))}
+                  className="w-full rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-[color:var(--world-ink)] outline-none"
+                  placeholder="Supplier name"
+                />
+                <input
+                  value={billForm.email}
+                  onChange={(event) => setBillForm((current) => ({ ...current, email: event.target.value }))}
+                  className="w-full rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-[color:var(--world-ink)] outline-none"
+                  placeholder="Supplier email"
+                />
+                <input
+                  value={billForm.reference}
+                  onChange={(event) => setBillForm((current) => ({ ...current, reference: event.target.value }))}
+                  className="w-full rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-[color:var(--world-ink)] outline-none"
+                  placeholder="Reference"
+                />
+                <textarea
+                  value={billForm.description}
+                  onChange={(event) => setBillForm((current) => ({ ...current, description: event.target.value }))}
+                  rows={3}
+                  className="w-full rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-[color:var(--world-ink)] outline-none"
+                  placeholder="Description"
+                />
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={billForm.amount}
+                    onChange={(event) => setBillForm((current) => ({ ...current, amount: event.target.value }))}
+                    className="w-full rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-[color:var(--world-ink)] outline-none"
+                    placeholder="Amount"
+                  />
+                  <input
+                    type="date"
+                    value={billForm.dueDate}
+                    onChange={(event) => setBillForm((current) => ({ ...current, dueDate: event.target.value }))}
+                    className="w-full rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-[color:var(--world-ink)] outline-none"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => void handleCreatePropertyBill()}
+                  disabled={billSubmitting || !billForm.contactName || !billForm.description || !billForm.amount || !billForm.dueDate}
+                  className="w-full rounded-[16px] bg-[color:var(--world-accent)] text-[#1d140d] hover:bg-[color:var(--world-accent-2)]"
+                >
+                  {billSubmitting ? "Adding to Xero..." : "Add property bill"}
+                </Button>
+              </div>
+            </motion.div>
+          </>
+        ) : null}
+      </AnimatePresence>
+
       <WorldDetailSheet
         panel={panel}
         onClose={() => setPanel(null)}
         getInvoicePrimaryLabel={getInvoicePrimaryLabel}
         onInvoicePrimaryAction={handleInvoicePrimaryAction}
-        onOpenTask={handleOpenTaskFromPanel}
+        onDetailAction={handleDetailAction}
         actionLoadingInvoiceId={invoiceActionLoadingId}
       />
     </div>

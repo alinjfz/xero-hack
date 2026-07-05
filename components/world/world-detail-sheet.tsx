@@ -15,6 +15,8 @@ export type DetailPanel = {
   subtitle: string;
   invoices: InvoiceSnapshot[];
   currency: string | null;
+  invoiceActions?: "none" | "primary";
+  actions?: DetailAction[];
   sections?: Array<{
     key: string;
     title: string;
@@ -22,16 +24,32 @@ export type DetailPanel = {
       label: string;
       detail: string;
       value?: string;
+      action?: DetailAction;
     }>;
   }>;
+  chart?: {
+    title: string;
+    bars: Array<{
+      label: string;
+      income: number;
+      expense: number;
+    }>;
+  };
+};
+
+export type DetailAction = {
+  id: string;
+  label: string;
+  href?: string;
+  meta?: Record<string, string>;
 };
 
 type Props = {
   panel: DetailPanel | null;
   onClose: () => void;
-  getInvoicePrimaryLabel: (invoice: InvoiceSnapshot, panel: DetailPanel) => string;
+  getInvoicePrimaryLabel: (invoice: InvoiceSnapshot, panel: DetailPanel) => string | null;
   onInvoicePrimaryAction: (invoice: InvoiceSnapshot, panel: DetailPanel) => void;
-  onOpenTask: (invoice: InvoiceSnapshot, panel: DetailPanel) => void;
+  onDetailAction: (action: DetailAction, panel: DetailPanel) => void;
   actionLoadingInvoiceId?: string | null;
 };
 
@@ -72,7 +90,7 @@ export function WorldDetailSheet({
   onClose,
   getInvoicePrimaryLabel,
   onInvoicePrimaryAction,
-  onOpenTask,
+  onDetailAction,
   actionLoadingInvoiceId,
 }: Props) {
   return (
@@ -100,12 +118,66 @@ export function WorldDetailSheet({
                 <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--world-muted)]">{panel.hotspot}</p>
                 <h2 className="font-[family-name:var(--font-display)] text-2xl text-[color:var(--world-ink)]">{panel.title}</h2>
                 <p className="mt-1 text-sm text-[color:var(--world-muted)]">{panel.subtitle}</p>
+                {panel.actions?.length ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {panel.actions.map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        onClick={() => onDetailAction(action, panel)}
+                        className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)]"
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <Button variant="secondary" size="sm" onClick={onClose}>
                 <X className="size-4" />
               </Button>
             </div>
             <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-5">
+              {panel.chart ? (
+                <section className="space-y-3">
+                  <h3 className="text-sm font-semibold text-[color:var(--world-ink)]">{panel.chart.title}</h3>
+                  <div className="rounded-2xl border border-[color:var(--world-border)] bg-[color:var(--world-card)] p-4">
+                    <div className="flex h-40 items-end gap-3">
+                      {panel.chart.bars.map((bar) => {
+                        const maxValue = Math.max(
+                          1,
+                          ...panel.chart!.bars.flatMap((entry) => [entry.income, entry.expense]),
+                        );
+                        return (
+                          <div key={bar.label} className="flex min-w-0 flex-1 flex-col items-center gap-2">
+                            <div className="flex h-28 w-full items-end justify-center gap-1">
+                              <div
+                                className="w-4 rounded-t-md bg-[rgba(246,200,90,0.82)]"
+                                style={{ height: `${(bar.income / maxValue) * 100}%` }}
+                              />
+                              <div
+                                className="w-4 rounded-t-md bg-[rgba(111,150,204,0.72)]"
+                                style={{ height: `${(bar.expense / maxValue) * 100}%` }}
+                              />
+                            </div>
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-[color:var(--world-muted)]">{bar.label}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-4 text-[11px] uppercase tracking-[0.14em] text-[color:var(--world-muted)]">
+                      <span className="inline-flex items-center gap-2">
+                        <span className="block size-3 rounded-sm bg-[rgba(246,200,90,0.82)]" />
+                        Income
+                      </span>
+                      <span className="inline-flex items-center gap-2">
+                        <span className="block size-3 rounded-sm bg-[rgba(111,150,204,0.72)]" />
+                        Costs
+                      </span>
+                    </div>
+                  </div>
+                </section>
+              ) : null}
               {panel.sections?.length ? (
                 panel.sections.map((section) => (
                   <section key={section.key} className="space-y-3">
@@ -120,6 +192,15 @@ export function WorldDetailSheet({
                             <div>
                               <p className="text-sm font-medium text-[color:var(--world-ink)]">{item.label}</p>
                               <p className="mt-1 text-xs leading-6 text-[color:var(--world-muted)]">{item.detail}</p>
+                              {item.action ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onDetailAction(item.action!, panel)}
+                                  className="mt-3 rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)]"
+                                >
+                                  {item.action.label}
+                                </button>
+                              ) : null}
                             </div>
                             {item.value ? (
                               <p className="text-sm font-semibold text-[color:var(--world-accent)]">{item.value}</p>
@@ -157,23 +238,18 @@ export function WorldDetailSheet({
                               {formatCurrency(invoice.amountDue || invoice.total, panel.currency)}
                             </p>
                           </div>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => onInvoicePrimaryAction(invoice, panel)}
-                              disabled={actionLoadingInvoiceId === invoice.invoiceId}
-                              className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] disabled:opacity-55"
-                            >
-                              {actionLoadingInvoiceId === invoice.invoiceId ? "Working..." : getInvoicePrimaryLabel(invoice, panel)}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onOpenTask(invoice, panel)}
-                              className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-panel)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card-strong)]"
-                            >
-                              Open task
-                            </button>
-                          </div>
+                          {panel.invoiceActions !== "none" && getInvoicePrimaryLabel(invoice, panel) ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => onInvoicePrimaryAction(invoice, panel)}
+                                disabled={actionLoadingInvoiceId === invoice.invoiceId}
+                                className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] disabled:opacity-55"
+                              >
+                                {actionLoadingInvoiceId === invoice.invoiceId ? "Working..." : getInvoicePrimaryLabel(invoice, panel)}
+                              </button>
+                            </div>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
