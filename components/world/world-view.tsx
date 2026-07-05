@@ -599,6 +599,34 @@ function buildHotspotStatuses(summary: Extract<WorldSummaryResponse, { connected
   } satisfies Record<string, HotspotStatus>;
 }
 
+function getTaskActionLabel(task: ActionableTask) {
+  if (task.action) {
+    return "Draft with AI";
+  }
+
+  if (task.reason === "bill") {
+    return "Open review";
+  }
+
+  if (task.reason === "tax") {
+    return "Open checklist";
+  }
+
+  if (task.reason === "followup") {
+    return "Open follow-up";
+  }
+
+  if (task.reason === "draft") {
+    return "Open draft";
+  }
+
+  if (task.reason === "overdue" || task.reason === "goal") {
+    return "Open task";
+  }
+
+  return "Open";
+}
+
 export function WorldView() {
   const [summary, setSummary] = useState<WorldSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -743,6 +771,15 @@ export function WorldView() {
     setStreak(next);
   }
 
+  function handleUndoTask(task: WorldTask) {
+    if (!completedTaskIds.includes(task.id)) {
+      return;
+    }
+
+    setCompletedTaskIds((current) => current.filter((id) => id !== task.id));
+    setEarnedXp((current) => Math.max(0, current - task.xp));
+  }
+
   async function openGoalModal() {
     if (goal) {
       setSelectedGoalType(goal.type);
@@ -805,7 +842,11 @@ export function WorldView() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(task.action),
+        body: JSON.stringify({
+          ...task.action,
+          senderName: connectedSummary.tenant.name,
+          senderCompany: connectedSummary.organisation.legalName ?? connectedSummary.organisation.name,
+        }),
       });
       const data = (await response.json()) as {
         draft?: string;
@@ -830,6 +871,39 @@ export function WorldView() {
     } finally {
       setDraftLoadingId(null);
     }
+  }
+
+  function openTaskArea(task: ActionableTask) {
+    const target: PanelTarget =
+      task.location === "home"
+        ? task.reason === "bill"
+          ? "home-bills"
+          : "home-rent"
+        : task.location === "biz"
+          ? task.reason === "bill"
+            ? "biz-bills"
+            : task.reason === "draft"
+              ? "biz-drafts"
+              : task.reason === "followup"
+                ? "biz-revenue"
+                : "biz-receivables"
+          : task.reason === "tax"
+            ? "mailbox"
+            : "biz-receivables";
+
+    if (task.location !== "outside") {
+      setScene(task.location);
+    }
+    setPanel(buildPanel(connectedSummary, target));
+  }
+
+  function handleTaskAction(task: ActionableTask) {
+    if (task.action) {
+      void handleGenerateDraft(task);
+      return;
+    }
+
+    openTaskArea(task);
   }
 
   function handleHotspot(hotspot: SceneHotspot) {
@@ -930,6 +1004,28 @@ export function WorldView() {
                 >
                   Set New Goal
                 </Button>
+              </div>
+            </PanelShell>
+
+            <PanelShell eyebrow="Progression" title="Reward track">
+              <div className="space-y-3">
+                <div className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-[color:var(--world-ink)]">XP toward next level</p>
+                      <p className="text-xs text-[color:var(--world-muted)]">{levelProgress} / 300 XP</p>
+                    </div>
+                    <Image src="/world/chest-badge.svg" alt="Reward chest badge" width={44} height={44} />
+                  </div>
+                  <div className="mt-3 h-3 overflow-hidden rounded-full bg-[color:var(--world-panel)]">
+                    <div className="world-progress-fill h-full" style={{ width: `${(levelProgress / 300) * 100}%` }} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <StatChip label="Earned XP" value={String(earnedXp)} tone="accent" />
+                  <StatChip label="Overdue" value={String(summary.combined.overdueCount)} tone={summary.combined.overdueCount > 0 ? "danger" : "default"} />
+                </div>
+                <StatChip label="Bank" value={formatCurrency(summary.combined.bankBalance ?? 0, summary.organisation.baseCurrency)} tone="accent" />
               </div>
             </PanelShell>
           </div>
@@ -1072,53 +1168,40 @@ export function WorldView() {
                               {sceneTaskLabel(task.location)} · {task.xp} XP
                             </p>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => handleResolveTask(task)}
-                            disabled={done}
-                            className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-panel)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card-strong)] disabled:opacity-55"
-                          >
-                            {done ? "Done" : "Complete"}
-                          </button>
-                        </div>
-                        {task.action ? (
-                          <div className="mt-3">
+                          <div className="flex shrink-0 flex-col items-end gap-2">
                             <button
                               type="button"
-                              onClick={() => handleGenerateDraft(task)}
+                              onClick={() => handleTaskAction(task)}
                               disabled={draftLoadingId === task.id}
                               className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)]"
                             >
-                              {draftLoadingId === task.id ? "Generating..." : "Draft with AI"}
+                              {draftLoadingId === task.id && task.action ? "Generating..." : getTaskActionLabel(task)}
                             </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleResolveTask(task)}
+                                disabled={done}
+                                className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-panel)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card-strong)] disabled:opacity-55"
+                              >
+                                {done ? "Done" : "Complete"}
+                              </button>
+                              {done ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUndoTask(task)}
+                                  className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card-strong)]"
+                                >
+                                  Undo
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
-                        ) : null}
+                        </div>
                       </div>
                     );
                   })
                 )}
-              </div>
-            </PanelShell>
-
-            <PanelShell eyebrow="Progression" title="Reward track">
-              <div className="space-y-3">
-                <div className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-[color:var(--world-ink)]">XP toward next level</p>
-                      <p className="text-xs text-[color:var(--world-muted)]">{levelProgress} / 300 XP</p>
-                    </div>
-                    <Image src="/world/chest-badge.svg" alt="Reward chest badge" width={44} height={44} />
-                  </div>
-                  <div className="mt-3 h-3 overflow-hidden rounded-full bg-[color:var(--world-panel)]">
-                    <div className="world-progress-fill h-full" style={{ width: `${(levelProgress / 300) * 100}%` }} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <StatChip label="Earned XP" value={String(earnedXp)} tone="accent" />
-                  <StatChip label="Overdue" value={String(summary.combined.overdueCount)} tone={summary.combined.overdueCount > 0 ? "danger" : "default"} />
-                </div>
-                <StatChip label="Bank" value={formatCurrency(summary.combined.bankBalance ?? 0, summary.organisation.baseCurrency)} tone="accent" />
               </div>
             </PanelShell>
           </div>
@@ -1137,7 +1220,7 @@ export function WorldView() {
               onClick={() => setGoalModalOpen(false)}
             />
             <motion.div
-              className="fixed inset-x-0 bottom-0 z-50 mx-auto max-h-[82vh] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-[color:var(--world-border)] bg-[color:var(--world-panel)] shadow-2xl"
+              className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-[color:var(--world-border)] bg-[color:var(--world-panel)] shadow-2xl"
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
@@ -1153,7 +1236,7 @@ export function WorldView() {
                   <X className="size-4" />
                 </Button>
               </div>
-              <div className="space-y-5 overflow-y-auto px-6 py-5">
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
                 {goalSuggestionsLoading ? (
                   <p className="text-sm text-[color:var(--world-muted)]">Loading suggestions...</p>
                 ) : (
@@ -1237,7 +1320,7 @@ export function WorldView() {
               onClick={() => setDraftModal(null)}
             />
             <motion.div
-              className="fixed inset-x-0 bottom-0 z-50 mx-auto max-h-[82vh] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-[color:var(--world-border)] bg-[color:var(--world-panel)] shadow-2xl"
+              className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-[color:var(--world-border)] bg-[color:var(--world-panel)] shadow-2xl"
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
@@ -1253,7 +1336,7 @@ export function WorldView() {
                   <X className="size-4" />
                 </Button>
               </div>
-              <div className="space-y-4 overflow-y-auto px-6 py-5">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
                 <div className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3">
                   <p className="text-[11px] uppercase tracking-[0.22em] text-[color:var(--world-muted)]">Subject</p>
                   <p className="mt-1 text-sm font-semibold text-[color:var(--world-ink)]">{draftModal.subject}</p>

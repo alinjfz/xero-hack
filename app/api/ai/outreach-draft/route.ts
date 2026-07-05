@@ -15,6 +15,8 @@ export async function POST(request: Request) {
       context: string[];
       subjectHint?: string;
       recipientEmail?: string;
+      senderName?: string;
+      senderCompany?: string;
     };
 
     const promptIntent =
@@ -42,11 +44,11 @@ export async function POST(request: Request) {
           {
             role: "system",
             content:
-              "You write short customer outreach drafts for a small business. Do not mention or invent any numbers, currencies, dates, balances, invoice totals, or counts unless they are explicitly provided in the prompt context. Keep the draft practical and under 140 words. Return plain email body text only.",
+              "You write short customer outreach drafts for a small business. Do not mention or invent any numbers, currencies, dates, balances, invoice totals, or counts unless they are explicitly provided in the prompt context. Keep the draft practical and under 140 words. Return plain email body text only, fully signed off with the sender name and company if provided.",
           },
           {
             role: "user",
-            content: `Write ${promptIntent} for ${body.customerName}. Use this context:\n- ${body.context.join("\n- ")}\n\nIf useful, be specific to this person and scenario rather than generic.`,
+            content: `Write ${promptIntent} for ${body.customerName}. Use this context:\n- ${body.context.join("\n- ")}\n- Sender name: ${body.senderName ?? "Finance team"}\n- Sender company: ${body.senderCompany ?? "the company"}\n\nIf useful, be specific to this person and scenario rather than generic.`,
           },
         ],
       }),
