@@ -216,6 +216,16 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
       icon: ScrollText,
       action: { type: "panel", target: "home-tax" },
     },
+    {
+      id: "home-accountant",
+      label: "Accountant",
+      x: 18,
+      y: 46,
+      width: 16,
+      height: 18,
+      icon: BriefcaseBusiness,
+      action: { type: "accountant" },
+    },
   ],
   biz: [
     {
@@ -362,7 +372,7 @@ function buildPanel(
       currency,
       actions: [
         { id: "download-operations-csv", label: "Download CSV" },
-        { id: "open-google-sheets", label: "Open Google Sheets" },
+        { id: "open-google-sheets", label: "Download sheet" },
       ],
       sections: [
         {
@@ -415,7 +425,7 @@ function buildPanel(
                 "Xero gives us rent and bill flows, but true ROI also needs property value and financing cost. Add those later to unlock a proper yield/ROI board.",
               action: {
                 id: "open-google-sheets",
-                label: "Open Sheets model",
+                label: "Download sheet model",
               },
             },
           ],
@@ -445,7 +455,7 @@ function buildPanel(
       currency,
       actions: [
         { id: "download-operations-csv", label: "Download checklist CSV" },
-        { id: "open-google-sheets", label: "Open Google Sheets" },
+        { id: "open-google-sheets", label: "Download sheet" },
       ],
       sections: [
         {
@@ -495,7 +505,7 @@ function buildPanel(
       subtitle: "Bills the business still needs to handle",
       invoices: biz.payables,
       currency,
-      invoiceActions: "primary",
+      invoiceActions: "none",
     },
     "biz-revenue": {
       target: "biz-revenue",
@@ -517,7 +527,7 @@ function buildPanel(
       currency,
       actions: [
         { id: "download-operations-csv", label: "Download checklist CSV" },
-        { id: "open-google-sheets", label: "Open Google Sheets" },
+        { id: "open-google-sheets", label: "Download sheet" },
       ],
       sections: [
         {
@@ -549,7 +559,7 @@ function buildPanel(
       currency,
       actions: [
         { id: "download-operations-csv", label: "Download follow-up CSV" },
-        { id: "open-google-sheets", label: "Open Google Sheets" },
+        { id: "open-google-sheets", label: "Download sheet" },
       ],
       sections: [
         {
@@ -922,6 +932,12 @@ function buildHotspotStatuses(summary: Extract<WorldSummaryResponse, { connected
       label: "Landlord prep",
       note: "Use this desk to sanity-check property-side filing readiness.",
     },
+    "home-accountant": {
+      count: Math.max(0, taxTaskCount + home.overdue.length),
+      tone: countTone(taxTaskCount + home.overdue.length, 3),
+      label: "Accountant",
+      note: "Use the house accountant for rent, tax prep, and landlord handoff questions.",
+    },
     "biz-receivables": {
       count: biz.receivables.length + biz.overdue.length,
       tone: countTone(biz.receivables.length + biz.overdue.length, 4),
@@ -1002,23 +1018,23 @@ function getTaskActionLabel(task: ActionableTask) {
   }
 
   if (task.reason === "bill") {
-    return "Open review";
+    return "Review now";
   }
 
   if (task.reason === "tax") {
-    return "Open checklist";
+    return "Fix checklist";
   }
 
   if (task.reason === "followup") {
-    return "Open follow-up";
+    return "Review follow-up";
   }
 
   if (task.reason === "draft") {
-    return "Open draft";
+    return "Review draft";
   }
 
   if (task.reason === "overdue" || task.reason === "goal") {
-    return "Open task";
+    return "Take action";
   }
 
   return "Open";
@@ -1048,6 +1064,8 @@ export function WorldView() {
   const [invoiceActionLoadingId, setInvoiceActionLoadingId] = useState<string | null>(null);
   const [billModalOpen, setBillModalOpen] = useState(false);
   const [billSubmitting, setBillSubmitting] = useState(false);
+  const [todoOpen, setTodoOpen] = useState(true);
+  const [completedOpen, setCompletedOpen] = useState(true);
   const [accountantOpen, setAccountantOpen] = useState(false);
   const [accountantMessages, setAccountantMessages] = useState<AccountantMessage[]>([]);
   const [accountantInput, setAccountantInput] = useState("");
@@ -1093,6 +1111,47 @@ export function WorldView() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isConnectedWorld(summary)) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function preloadGoalSuggestions() {
+      setGoalSuggestionsLoading(true);
+
+      try {
+        const response = await fetch("/api/ai/goal-suggestions", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const data = (await response.json()) as { suggestions?: GoalSuggestion[] };
+
+        if (cancelled) {
+          return;
+        }
+
+        setGoalSuggestions(data.suggestions ?? []);
+        if (!goal && data.suggestions?.[0]) {
+          setSelectedGoalType(data.suggestions[0].type);
+          setSelectedGoalTarget(data.suggestions[0].target);
+          setSelectedGoalLabel(data.suggestions[0].label);
+        }
+      } finally {
+        if (!cancelled) {
+          setGoalSuggestionsLoading(false);
+        }
+      }
+    }
+
+    void preloadGoalSuggestions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [summary, goal]);
 
   const connected = isConnectedWorld(summary);
   const resolvedIds = streak.resolvedAlertIds;
@@ -1163,6 +1222,8 @@ export function WorldView() {
   );
   const allTasks: ActionableTask[] = [...goalTasks, ...dedupedBoardTasks];
   const sceneTasks = allTasks.filter((task) => task.location === scene || task.location === "outside");
+  const todoTasks = sceneTasks.filter((task) => !completedTaskIds.includes(task.id));
+  const completedTasks = sceneTasks.filter((task) => completedTaskIds.includes(task.id));
   const sceneMeta = SCENE_META[scene];
   const totalReceivables = home.metrics.receivables + biz.metrics.receivables;
   const hotspotStatuses = buildHotspotStatuses(summary, allTasks);
@@ -1204,22 +1265,11 @@ export function WorldView() {
     }
 
     setGoalModalOpen(true);
-    setGoalSuggestionsLoading(true);
 
-    try {
-      const response = await fetch("/api/ai/goal-suggestions", {
-        credentials: "include",
-        cache: "no-store",
-      });
-      const data = (await response.json()) as { suggestions?: GoalSuggestion[] };
-      setGoalSuggestions(data.suggestions ?? []);
-      if (data.suggestions?.[0]) {
-        setSelectedGoalType(data.suggestions[0].type);
-        setSelectedGoalTarget(data.suggestions[0].target);
-        setSelectedGoalLabel(data.suggestions[0].label);
-      }
-    } finally {
-      setGoalSuggestionsLoading(false);
+    if (!goal && goalSuggestions[0]) {
+      setSelectedGoalType(goalSuggestions[0].type);
+      setSelectedGoalTarget(goalSuggestions[0].target);
+      setSelectedGoalLabel(goalSuggestions[0].label);
     }
   }
 
@@ -1371,7 +1421,7 @@ export function WorldView() {
 
   function getInvoicePrimaryLabel(invoice: DetailPanel["invoices"][number], sourcePanel: DetailPanel) {
     if (invoice.status === "DRAFT" && sourcePanel.target === "biz-drafts") {
-      return "Authorise in Xero";
+      return "Authorise draft";
     }
 
     if (sourcePanel.target === "home-bills") {
@@ -1416,7 +1466,7 @@ export function WorldView() {
 
   function handleDetailAction(action: DetailAction, sourcePanel: DetailPanel) {
     if (action.id === "open-google-sheets") {
-      window.open("https://docs.google.com/spreadsheets/create", "_blank", "noopener,noreferrer");
+      window.open("/api/operations/workbook", "_blank", "noopener,noreferrer");
       return;
     }
 
@@ -1426,6 +1476,7 @@ export function WorldView() {
     }
 
     if (action.id === "add-property-bill") {
+      setPanel(null);
       setBillModalOpen(true);
       return;
     }
@@ -1547,7 +1598,6 @@ export function WorldView() {
   }
 
   function openAccountant() {
-    setScene("biz");
     setPanel(null);
     setAccountantOpen(true);
     setAccountantMessages((current) =>
@@ -1872,61 +1922,103 @@ export function WorldView() {
                     Loading tasks...
                   </div>
                 ) : (
-                  sceneTasks.map((task) => {
-                    const done = completedTaskIds.includes(task.id);
-
-                    return (
-                      <div
-                        key={task.id}
-                        className={`rounded-[18px] border px-4 py-4 ${
-                          done
-                            ? "border-[color:var(--world-accent-soft)] bg-[rgba(246,200,90,0.12)]"
-                            : "border-[color:var(--world-border)] bg-[color:var(--world-card)]"
-                        }`}
+                  <>
+                    <div className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)]">
+                      <button
+                        type="button"
+                        onClick={() => setTodoOpen((current) => !current)}
+                        className="flex w-full items-center justify-between px-4 py-3 text-left"
                       >
-                        <div>
-                          <div>
-                            <p className="text-sm font-semibold text-[color:var(--world-ink)]">{task.title}</p>
-                            <p className="mt-1 text-xs leading-6 text-[color:var(--world-muted)]">{task.detail}</p>
-                            <p className="mt-2 text-[11px] uppercase tracking-[0.2em] text-[color:var(--world-muted)]">
-                              {sceneTaskLabel(task.location)} · {task.xp} XP
-                            </p>
-                          </div>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleTaskAction(task)}
-                                disabled={draftLoadingId === task.id}
-                                className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)]"
+                        <span className="text-sm font-semibold text-[color:var(--world-ink)]">To do</span>
+                        <span className="text-xs uppercase tracking-[0.18em] text-[color:var(--world-muted)]">
+                          {todoTasks.length} {todoOpen ? "hide" : "show"}
+                        </span>
+                      </button>
+                      {todoOpen ? (
+                        <div className="space-y-3 border-t border-[color:var(--world-border)] px-3 py-3">
+                          {todoTasks.length ? (
+                            todoTasks.map((task) => (
+                              <div
+                                key={task.id}
+                                className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-4 py-4"
                               >
-                                {draftLoadingId === task.id && task.action ? "Generating..." : getTaskActionLabel(task)}
-                              </button>
+                                <p className="text-sm font-semibold text-[color:var(--world-ink)]">{task.title}</p>
+                                <p className="mt-1 text-xs leading-6 text-[color:var(--world-muted)]">{task.detail}</p>
+                                <p className="mt-2 text-[11px] uppercase tracking-[0.2em] text-[color:var(--world-muted)]">
+                                  {sceneTaskLabel(task.location)} · {task.xp} XP
+                                </p>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTaskAction(task)}
+                                    disabled={draftLoadingId === task.id}
+                                    className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)]"
+                                  >
+                                    {draftLoadingId === task.id && task.action ? "Generating..." : getTaskActionLabel(task)}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResolveTask(task)}
+                                    className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-panel)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card)]"
+                                  >
+                                    Complete
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-4 py-3 text-sm text-[color:var(--world-muted)]">
+                              Nothing is waiting in this room right now.
                             </div>
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleResolveTask(task)}
-                                disabled={done}
-                                className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-panel)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card-strong)] disabled:opacity-55"
-                              >
-                                {done ? "Done" : "Complete"}
-                              </button>
-                              {done ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleUndoTask(task)}
-                                  className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card-strong)]"
-                                >
-                                  Undo
-                                </button>
-                              ) : null}
-                            </div>
-                          </div>
+                          )}
                         </div>
-                      </div>
-                    );
-                  })
+                      ) : null}
+                    </div>
+
+                    <div className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)]">
+                      <button
+                        type="button"
+                        onClick={() => setCompletedOpen((current) => !current)}
+                        className="flex w-full items-center justify-between px-4 py-3 text-left"
+                      >
+                        <span className="text-sm font-semibold text-[color:var(--world-ink)]">Completed</span>
+                        <span className="text-xs uppercase tracking-[0.18em] text-[color:var(--world-muted)]">
+                          {completedTasks.length} {completedOpen ? "hide" : "show"}
+                        </span>
+                      </button>
+                      {completedOpen ? (
+                        <div className="space-y-3 border-t border-[color:var(--world-border)] px-3 py-3">
+                          {completedTasks.length ? (
+                            completedTasks.map((task) => (
+                              <div
+                                key={task.id}
+                                className="rounded-[18px] border border-[color:var(--world-accent-soft)] bg-[rgba(246,200,90,0.12)] px-4 py-4"
+                              >
+                                <p className="text-sm font-semibold text-[color:var(--world-ink)]">{task.title}</p>
+                                <p className="mt-1 text-xs leading-6 text-[color:var(--world-muted)]">{task.detail}</p>
+                                <p className="mt-2 text-[11px] uppercase tracking-[0.2em] text-[color:var(--world-muted)]">
+                                  {sceneTaskLabel(task.location)} · {task.xp} XP
+                                </p>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUndoTask(task)}
+                                    className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card-strong)]"
+                                  >
+                                    Undo
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card-strong)] px-4 py-3 text-sm text-[color:var(--world-muted)]">
+                              Completed work will collect here.
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  </>
                 )}
               </div>
             </PanelShell>
@@ -2189,7 +2281,7 @@ export function WorldView() {
             >
               <div className="flex items-start justify-between gap-4 border-b border-[color:var(--world-border)] px-6 py-5">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--world-muted)]">Business accountant</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--world-muted)]">Ledger accountant</p>
                   <h2 className="font-[family-name:var(--font-display)] text-2xl text-[color:var(--world-ink)]">Ask about your numbers</h2>
                   <p className="mt-1 text-sm text-[color:var(--world-muted)]">Answers stay grounded in your connected data.</p>
                 </div>

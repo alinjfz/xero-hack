@@ -603,7 +603,7 @@ function showcaseInvoice(params: {
   };
 }
 
-function buildShowcaseSummary(openRouter: ReturnType<typeof getOpenRouterConfig>, organisationName = "Demo Company (UK)"): ConnectedSummary {
+export function buildShowcaseSummary(openRouter: ReturnType<typeof getOpenRouterConfig>, organisationName = "Demo Company (UK)"): ConnectedSummary {
   const receivableInvoices: InvoiceSnapshot[] = [
     showcaseInvoice({
       invoiceId: "showcase-rent-1",

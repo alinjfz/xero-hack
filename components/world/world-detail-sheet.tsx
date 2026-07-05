@@ -150,6 +150,11 @@ export function WorldDetailSheet({
                         );
                         return (
                           <div key={bar.label} className="flex min-w-0 flex-1 flex-col items-center gap-2">
+                            <div className="flex w-full items-center justify-center gap-1 text-[10px] font-semibold text-[color:var(--world-ink)]">
+                              <span>{formatCurrency(bar.income, panel.currency)}</span>
+                              <span className="text-[color:var(--world-muted)]">/</span>
+                              <span>{formatCurrency(bar.expense, panel.currency)}</span>
+                            </div>
                             <div className="flex h-28 w-full items-end justify-center gap-1">
                               <div
                                 className="w-4 rounded-t-md bg-[rgba(246,200,90,0.82)]"
