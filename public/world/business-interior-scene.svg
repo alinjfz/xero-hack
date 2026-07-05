@@ -38,19 +38,19 @@
   <rect x="190" y="612" width="232" height="12" fill="#B5A78D"/>
   <rect x="190" y="646" width="232" height="12" fill="#B5A78D"/>
 
-  <polygon points="632,570 760,570 746,556 618,556" fill="#6D7F8F"/>
-  <polygon points="632,570 632,640 618,626 618,556" fill="#4B5C69"/>
-  <polygon points="632,570 760,570 760,640 632,640" fill="#5C6F7E"/>
-  <rect x="654" y="588" width="84" height="18" fill="#CBE8FF"/>
-  <rect x="680" y="606" width="32" height="10" fill="#2E3741"/>
-  <rect x="678" y="640" width="36" height="54" fill="#50606D"/>
-  <rect x="638" y="650" width="20" height="66" fill="#20252B"/>
-  <rect x="660" y="650" width="20" height="66" fill="#20252B"/>
-  <rect x="636" y="618" width="22" height="32" fill="#E7C39B"/>
-  <rect x="660" y="592" width="18" height="24" fill="#E7C39B"/>
-  <rect x="662" y="620" width="14" height="28" fill="#314353"/>
-  <rect x="640" y="716" width="18" height="14" fill="#1B2025"/>
-  <rect x="662" y="716" width="18" height="14" fill="#1B2025"/>
+  <polygon points="632,424 760,424 746,410 618,410" fill="#6D7F8F"/>
+  <polygon points="632,424 632,494 618,480 618,410" fill="#4B5C69"/>
+  <polygon points="632,424 760,424 760,494 632,494" fill="#5C6F7E"/>
+  <rect x="654" y="442" width="84" height="18" fill="#CBE8FF"/>
+  <rect x="680" y="460" width="32" height="10" fill="#2E3741"/>
+  <rect x="678" y="494" width="36" height="54" fill="#50606D"/>
+  <rect x="638" y="504" width="20" height="66" fill="#20252B"/>
+  <rect x="660" y="504" width="20" height="66" fill="#20252B"/>
+  <rect x="636" y="472" width="22" height="32" fill="#E7C39B"/>
+  <rect x="660" y="446" width="18" height="24" fill="#E7C39B"/>
+  <rect x="662" y="474" width="14" height="28" fill="#314353"/>
+  <rect x="640" y="570" width="18" height="14" fill="#1B2025"/>
+  <rect x="662" y="570" width="18" height="14" fill="#1B2025"/>
 
   <polygon points="570,518 1052,518 1016,490 534,490" fill="#6B849B"/>
   <polygon points="570,518 570,760 534,732 534,490" fill="#495D71"/>

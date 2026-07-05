@@ -209,10 +209,10 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
     {
       id: "home-tax",
       label: "Landlord tax desk",
-      x: 69,
-      y: 42,
-      width: 16,
-      height: 18,
+      x: 68,
+      y: 31,
+      width: 17,
+      height: 16,
       icon: ScrollText,
       action: { type: "panel", target: "home-tax" },
     },
@@ -220,9 +220,9 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
       id: "home-accountant",
       label: "Accountant",
       x: 18,
-      y: 40,
+      y: 29,
       width: 16,
-      height: 18,
+      height: 16,
       icon: BriefcaseBusiness,
       action: { type: "accountant" },
     },
@@ -291,10 +291,10 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
     {
       id: "biz-accountant",
       label: "Accountant",
-      x: 44,
-      y: 61,
-      width: 12,
-      height: 24,
+      x: 43,
+      y: 48,
+      width: 14,
+      height: 21,
       icon: UserRound,
       action: { type: "accountant" },
     },
@@ -1873,7 +1873,7 @@ export function WorldView() {
                       <div className="world-monitor-flicker pointer-events-none absolute left-[42%] top-[56%] h-12 w-[17%]" />
                       <div className="world-city-glow pointer-events-none absolute inset-x-[8%] top-[13%] h-[26%]" />
                       <div className="world-voxel-shadow pointer-events-none absolute bottom-[15%] left-[42%] h-8 w-[28%]" />
-                      <div className="world-accountant-glow pointer-events-none absolute left-[23%] top-[52%] h-20 w-20" />
+                      <div className="world-accountant-glow pointer-events-none absolute left-[40%] top-[40%] h-20 w-20" />
                     </>
                   ) : null}
 
