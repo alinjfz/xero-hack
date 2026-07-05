@@ -15,6 +15,15 @@ export type DetailPanel = {
   subtitle: string;
   invoices: InvoiceSnapshot[];
   currency: string | null;
+  sections?: Array<{
+    key: string;
+    title: string;
+    items: Array<{
+      label: string;
+      detail: string;
+      value?: string;
+    }>;
+  }>;
 };
 
 type Props = {
@@ -97,7 +106,32 @@ export function WorldDetailSheet({
               </Button>
             </div>
             <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-5">
-              {panel.invoices.length === 0 ? (
+              {panel.sections?.length ? (
+                panel.sections.map((section) => (
+                  <section key={section.key} className="space-y-3">
+                    <h3 className="text-sm font-semibold text-[color:var(--world-ink)]">{section.title}</h3>
+                    <ul className="space-y-2">
+                      {section.items.map((item) => (
+                        <li
+                          key={`${section.key}-${item.label}`}
+                          className="rounded-2xl border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-[color:var(--world-ink)]">{item.label}</p>
+                              <p className="mt-1 text-xs leading-6 text-[color:var(--world-muted)]">{item.detail}</p>
+                            </div>
+                            {item.value ? (
+                              <p className="text-sm font-semibold text-[color:var(--world-accent)]">{item.value}</p>
+                            ) : null}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ))
+              ) : null}
+              {panel.invoices.length === 0 && !panel.sections?.length ? (
                 <p className="text-sm text-[color:var(--world-muted)]">Nothing to show here yet. Load starter records or connect a tenant with active data.</p>
               ) : (
                 groupInvoices(panel.invoices).map((group) => (

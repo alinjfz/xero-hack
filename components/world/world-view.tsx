@@ -37,7 +37,18 @@ import { pickMascotTip } from "@/lib/mascot-tips";
 import type { WorldSummaryResponse } from "@/lib/world-summary";
 
 type SceneId = "outside" | "home" | "biz";
-type PanelTarget = "mailbox" | "home-rent" | "home-bills" | "biz-receivables" | "biz-drafts" | "biz-bills" | "biz-revenue";
+type PanelTarget =
+  | "mailbox"
+  | "home-rent"
+  | "home-bills"
+  | "home-outlook"
+  | "home-tax"
+  | "biz-receivables"
+  | "biz-drafts"
+  | "biz-bills"
+  | "biz-revenue"
+  | "biz-tax"
+  | "biz-followups";
 
 type SceneHotspot = {
   id: string;
@@ -113,12 +124,12 @@ const SCENE_META: Record<
   },
   home: {
     title: "House interior",
-    subtitle: "Rent, bills, and property cash flow live here.",
+    subtitle: "Rent, bills, property outlook, and landlord prep live here.",
     image: "/world/home-interior-scene.svg",
   },
   biz: {
     title: "Business interior",
-    subtitle: "Invoices, drafts, supplier bills, and monthly revenue live here.",
+    subtitle: "Invoices, drafts, supplier bills, tax readiness, and growth moves live here.",
     image: "/world/business-interior-scene.svg",
   },
 };
@@ -177,6 +188,26 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
       icon: Warehouse,
       action: { type: "panel", target: "home-bills" },
     },
+    {
+      id: "home-outlook",
+      label: "Property outlook",
+      x: 16,
+      y: 27,
+      width: 24,
+      height: 18,
+      icon: Star,
+      action: { type: "panel", target: "home-outlook" },
+    },
+    {
+      id: "home-tax",
+      label: "Landlord tax desk",
+      x: 62,
+      y: 27,
+      width: 24,
+      height: 18,
+      icon: ScrollText,
+      action: { type: "panel", target: "home-tax" },
+    },
   ],
   biz: [
     {
@@ -219,6 +250,26 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
       icon: Star,
       action: { type: "panel", target: "biz-revenue" },
     },
+    {
+      id: "biz-tax",
+      label: "Tax desk",
+      x: 15,
+      y: 20,
+      width: 20,
+      height: 14,
+      icon: ScrollText,
+      action: { type: "panel", target: "biz-tax" },
+    },
+    {
+      id: "biz-followups",
+      label: "Growth radar",
+      x: 76,
+      y: 19,
+      width: 20,
+      height: 14,
+      icon: BriefcaseBusiness,
+      action: { type: "panel", target: "biz-followups" },
+    },
   ],
 };
 
@@ -231,12 +282,18 @@ function isConnectedWorld(
 function buildPanel(
   summary: Extract<WorldSummaryResponse, { connected: true }>,
   target: PanelTarget,
+  board: OperationsBoard | null,
 ): DetailPanel {
   const home = summary.worlds.find((world) => world.id === "home")!;
   const biz = summary.worlds.find((world) => world.id === "biz")!;
   const currency = summary.organisation.baseCurrency;
   const uniqueInvoices = (invoices: Array<(typeof home.receivables)[number]>) =>
     invoices.filter((invoice, index, all) => all.findIndex((entry) => entry.invoiceId === invoice.invoiceId) === index);
+  const homeNetSpread = home.metrics.revenueThisMonth - home.metrics.billsDue;
+  const sharedTaxItems = board?.taxChecklist.filter((item) => item.worldId === "both") ?? [];
+  const bizTaxItems = board?.taxChecklist.filter((item) => item.worldId === "biz" || item.worldId === "both") ?? [];
+  const followupTargets = board?.followupTargets.filter((item) => item.worldId === "biz" || item.worldId === "shared") ?? [];
+  const growthReports = board?.reports ?? [];
 
   const panels: Record<PanelTarget, DetailPanel> = {
     mailbox: {
@@ -265,6 +322,81 @@ function buildPanel(
       subtitle: "Incoming costs for the property side",
       invoices: home.payables,
       currency,
+    },
+    "home-outlook": {
+      target: "home-outlook",
+      worldId: "home",
+      hotspot: "Property outlook",
+      title: "Property outlook",
+      subtitle: "Visible rent, bill pressure, and source-backed next moves",
+      invoices: [],
+      currency,
+      sections: [
+        {
+          key: "home-outlook-metrics",
+          title: "Cash picture",
+          items: [
+            {
+              label: "Visible rent this month",
+              detail: "Based on property-side invoice activity currently visible in Xero.",
+              value: formatCurrency(home.metrics.revenueThisMonth, currency),
+            },
+            {
+              label: "Open rent waiting to collect",
+              detail: "Authorised rent invoices still not converted into cash.",
+              value: formatCurrency(home.metrics.receivables, currency),
+            },
+            {
+              label: "Bills still due",
+              detail: "Property-side payables still waiting to leave the bank.",
+              value: formatCurrency(home.metrics.billsDue, currency),
+            },
+            {
+              label: "Net monthly spread",
+              detail: "Visible monthly rent less visible bills due. Useful as a quick operating view, not a full ROI.",
+              value: formatCurrency(homeNetSpread, currency),
+            },
+          ],
+        },
+        {
+          key: "home-outlook-guidance",
+          title: "Suggestions",
+          items: [
+            {
+              label: "Prioritise late rent first",
+              detail:
+                home.overdue.length > 0
+                  ? `${home.overdue.length} property invoice${home.overdue.length === 1 ? "" : "s"} are already overdue and should be chased before reviewing lower-pressure items.`
+                  : "No overdue property invoices are showing right now.",
+            },
+            {
+              label: "True ROI needs one more input",
+              detail:
+                "Xero gives us rent and bill flows, but true ROI also needs property value and financing cost. Add those later to unlock a proper yield/ROI board.",
+            },
+          ],
+        },
+      ],
+    },
+    "home-tax": {
+      target: "home-tax",
+      worldId: "home",
+      hotspot: "Landlord tax desk",
+      title: "Landlord tax prep",
+      subtitle: "What to review before self-assessment or accountant handoff",
+      invoices: [],
+      currency,
+      sections: [
+        {
+          key: "home-tax-items",
+          title: "Readiness checks",
+          items: sharedTaxItems.map((item) => ({
+            label: item.title,
+            detail: item.detail,
+            value: String(item.count),
+          })),
+        },
+      ],
     },
     "biz-receivables": {
       target: "biz-receivables",
@@ -301,6 +433,55 @@ function buildPanel(
       subtitle: formatCurrency(biz.metrics.revenueThisMonth, currency),
       invoices: biz.receivables,
       currency,
+    },
+    "biz-tax": {
+      target: "biz-tax",
+      worldId: "biz",
+      hotspot: "Tax desk",
+      title: "Self-assessment readiness",
+      subtitle: "Source-backed checks before tax prep or accountant handoff",
+      invoices: [],
+      currency,
+      sections: [
+        {
+          key: "biz-tax-items",
+          title: "Business readiness",
+          items: bizTaxItems.map((item) => ({
+            label: item.title,
+            detail: item.detail,
+            value: String(item.count),
+          })),
+        },
+      ],
+    },
+    "biz-followups": {
+      target: "biz-followups",
+      worldId: "biz",
+      hotspot: "Growth radar",
+      title: "Growth radar",
+      subtitle: "Who to follow up first and what the ledger suggests next",
+      invoices: [],
+      currency,
+      sections: [
+        {
+          key: "biz-followup-targets",
+          title: "Follow-up priority",
+          items: followupTargets.slice(0, 4).map((target) => ({
+            label: target.customerName,
+            detail: target.reason,
+            value: formatCurrency(target.amountDue, currency),
+          })),
+        },
+        {
+          key: "biz-followup-reports",
+          title: "Growth signals",
+          items: growthReports.slice(0, 3).map((report) => ({
+            label: report.label,
+            detail: report.detail,
+            value: report.value,
+          })),
+        },
+      ],
     },
   };
 
@@ -547,6 +728,10 @@ function buildHotspotStatuses(summary: Extract<WorldSummaryResponse, { connected
 
     return "default";
   };
+  const taxTaskCount = tasks.filter((task) => task.reason === "tax").length;
+  const growthTaskCount = tasks.filter(
+    (task) => task.reason === "followup" || task.reason === "goal" || task.reason === "overdue",
+  ).length;
 
   return {
     "outside-house": {
@@ -579,6 +764,18 @@ function buildHotspotStatuses(summary: Extract<WorldSummaryResponse, { connected
       label: "Bills pile",
       note: "Utilities, repairs, and supplier costs are stored here.",
     },
+    "home-outlook": {
+      count: home.receivables.length + home.payables.length,
+      tone: countTone(home.overdue.length + home.payables.length),
+      label: "Property view",
+      note: "Rent inflow, bill pressure, and landlord planning live here.",
+    },
+    "home-tax": {
+      count: taxTaskCount,
+      tone: countTone(taxTaskCount),
+      label: "Landlord prep",
+      note: "Use this desk to sanity-check property-side filing readiness.",
+    },
     "biz-receivables": {
       count: biz.receivables.length + biz.overdue.length,
       tone: countTone(biz.receivables.length + biz.overdue.length, 4),
@@ -602,6 +799,18 @@ function buildHotspotStatuses(summary: Extract<WorldSummaryResponse, { connected
       tone: biz.metrics.revenueThisMonth > 0 ? "accent" : "default",
       label: "Revenue signal",
       note: "This board should feel alive whenever the month is producing revenue.",
+    },
+    "biz-tax": {
+      count: taxTaskCount,
+      tone: countTone(taxTaskCount),
+      label: "Tax pressure",
+      note: "This desk holds readiness checks before you rely on the ledger for filing.",
+    },
+    "biz-followups": {
+      count: growthTaskCount,
+      tone: countTone(growthTaskCount),
+      label: "Growth moves",
+      note: "Accounts worth follow-up or conversion should light up here.",
     },
     overview: {
       count: overdueEverywhere + openTasks,
@@ -767,7 +976,7 @@ export function WorldView() {
   const sceneTasks = allTasks.filter((task) => task.location === scene || task.location === "outside");
   const sceneMeta = SCENE_META[scene];
   const totalReceivables = home.metrics.receivables + biz.metrics.receivables;
-  const hotspotStatuses = buildHotspotStatuses(summary, tasks);
+  const hotspotStatuses = buildHotspotStatuses(summary, allTasks);
   const currentHealth = summary.worlds.some((world) => world.health === "stormy")
     ? "stormy"
     : summary.worlds.some((world) => world.health === "cloudy")
@@ -1030,7 +1239,7 @@ export function WorldView() {
     if (task.location !== "outside") {
       setScene(task.location);
     }
-    setPanel(buildPanel(connectedSummary, target));
+    setPanel(buildPanel(connectedSummary, target, board));
   }
 
   function handleTaskAction(task: ActionableTask) {
@@ -1049,7 +1258,7 @@ export function WorldView() {
       return;
     }
 
-    setPanel(buildPanel(connectedSummary, hotspot.action.target));
+    setPanel(buildPanel(connectedSummary, hotspot.action.target, board));
   }
 
   function sceneSummaryValue() {
