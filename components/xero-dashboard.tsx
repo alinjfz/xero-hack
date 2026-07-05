@@ -17,6 +17,8 @@ import {
   Users2,
   Sliders,
   Flame,
+  MessageSquare,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +33,7 @@ import { ContractIntelligence } from "@/components/contract-intelligence";
 import { CliSeedSetup } from "@/components/cli-seed-setup";
 import type { OperationsBoard } from "@/lib/operations-board";
 import { SummaryResponse } from "@/lib/xero-summary";
+import { loadActiveGoals, saveActiveGoals, GoalType } from "@/lib/gamification";
 
 function isConnectedSummary(
   summary: SummaryResponse | null,
@@ -102,6 +105,127 @@ export function XeroDashboard() {
     description?: string;
     children: React.ReactNode;
   } | null>(null);
+
+  const [accountantOpen, setAccountantOpen] = useState(false);
+  const [accountantMessages, setAccountantMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [accountantInput, setAccountantInput] = useState("");
+  const [accountantLoading, setAccountantLoading] = useState(false);
+
+  function openAccountant() {
+    setAccountantOpen(true);
+    setAccountantMessages((current) =>
+      current.length > 0
+        ? current
+        : [
+            {
+              role: "assistant",
+              content: buildAccountantGreetingHomepage(),
+            },
+          ],
+    );
+  }
+
+  function buildAccountantGreetingHomepage() {
+    if (!summary || !isConnectedSummary(summary)) {
+      return "Hello! I can help you read your business numbers in plain English. Ask me what to fix first, how cash looks, or what to clean up.";
+    }
+    const bank = summary.metrics.bankAccounts;
+    const receivables = summary.metrics.receivablesAmount;
+    const baseCurrency = summary.organisation.baseCurrency || "GBP";
+    
+    return [
+      `I can help you read ${summary.organisation.name}'s numbers in plain English.`,
+      `We detected ${bank} connected bank accounts, and business receivables open: ${formatCurrency(receivables, baseCurrency)}.`,
+      "Ask me what to fix first, how cash looks, or what to clean up before tax time.",
+    ].join(" ");
+  }
+
+  const sendAccountantMessage = useEffectEvent(async (messageText?: string) => {
+    const text = (messageText ?? accountantInput).trim();
+
+    if (!text || accountantLoading) {
+      return;
+    }
+
+    const nextMessages = [...accountantMessages, { role: "user" as const, content: text }].slice(-10);
+    setAccountantMessages(nextMessages);
+    setAccountantInput("");
+    setAccountantLoading(true);
+
+    try {
+      const response = await fetch("/api/ai/accountant-chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          messages: nextMessages,
+        }),
+      });
+      const data = (await response.json()) as { reply?: string };
+
+      if (!response.ok || !data.reply) {
+        throw new Error("Unable to reach the accountant.");
+      }
+
+      setAccountantMessages((current) => [...current, { role: "assistant", content: data.reply! }]);
+    } catch {
+      setAccountantMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          content:
+            "I couldn't answer live just now. Based on your ledger, start with overdue invoices, draft hygiene, and supplier bill review before moving to lower-pressure work.",
+        },
+      ]);
+    } finally {
+      setAccountantLoading(false);
+    }
+  });
+
+  const [goals, setGoals] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setGoals(loadActiveGoals());
+    }
+  }, []);
+
+  function computeGoalProgressHomepage(g: any) {
+    if (!g) {
+      return { current: 0, target: 1, percent: 0, label: "Pick a goal to begin" };
+    }
+    if (!summary || !isConnectedSummary(summary)) {
+      return { current: 0, target: 1, percent: 0, label: g.label };
+    }
+
+    const baseCurrency = summary.organisation.baseCurrency || "GBP";
+
+    switch (g.type) {
+      case "revenue_target": {
+        const current = summary.metrics.receivablesAmount ?? 0;
+        const percent = g.target > 0 ? Math.min(100, Math.round((current / g.target) * 100)) : 0;
+        return { current, target: g.target, percent, label: g.label };
+      }
+      case "zero_overdue": {
+        const current = summary.metrics.overdue;
+        const percent = current === 0 ? 100 : Math.max(0, 100 - current * 25);
+        return { current, target: 0, percent, label: g.label };
+      }
+      case "cash_buffer": {
+        const current = summary.metrics.bankBalance ?? 0;
+        const percent = g.target > 0 ? Math.min(100, Math.round((current / g.target) * 100)) : 0;
+        return { current, target: g.target, percent, label: g.label };
+      }
+      case "rent_collected": {
+        return { current: 100, target: 100, percent: 100, label: g.label };
+      }
+      case "custom":
+      default:
+        return { current: 50, target: 100, percent: 50, label: g.customText ?? g.label };
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -2035,6 +2159,185 @@ export function XeroDashboard() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Active Goals Card */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <CardTitle>Active Goals</CardTitle>
+                  <CardDescription>
+                    Track your business objectives, synchronized with your world.
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs text-[color:var(--accent)] hover:bg-white/5 rounded-lg px-3 py-1"
+                  onClick={() =>
+                    setActiveModal({
+                      title: "Add Active Goal",
+                      description: "Select an objective to track. Your progress updates live based on your Xero data.",
+                      children: (
+                        <div className="space-y-4 py-2 text-left">
+                          <p className="text-sm text-[color:var(--muted-foreground)]">
+                            Select a core preset or objective. Your progress updates live based on your Xero data.
+                          </p>
+                          <div className="space-y-2">
+                            {[
+                              { type: "revenue_target", label: "Monthly Revenue Target (£5k)", defaultTarget: 5000 },
+                              { type: "zero_overdue", label: "Clear Overdue Invoices", defaultTarget: 0 },
+                              { type: "cash_buffer", label: "Cash Buffer Target (£10k)", defaultTarget: 10000 },
+                              { type: "rent_collected", label: "Rent collected on time", defaultTarget: 100 },
+                            ].map((preset) => {
+                              const isActive = goals.some((g) => g.type === preset.type);
+                              return (
+                                <button
+                                  key={preset.type}
+                                  disabled={isActive}
+                                  onClick={() => {
+                                    const newGoal = {
+                                      type: preset.type as GoalType,
+                                      label: preset.label,
+                                      target: preset.defaultTarget,
+                                      setAt: new Date().toISOString(),
+                                    };
+                                    const nextGoals = [...goals.filter((g) => g.type !== preset.type), newGoal];
+                                    saveActiveGoals(nextGoals);
+                                    setGoals(nextGoals);
+                                    setActiveModal(null);
+                                  }}
+                                  className={`w-full flex items-center justify-between rounded-2xl border p-4 text-left transition-colors ${
+                                    isActive
+                                      ? "border-emerald-500/30 bg-emerald-500/5 opacity-60 cursor-not-allowed"
+                                      : "border-white/10 bg-white/5 hover:border-amber-500/50"
+                                  }`}
+                                >
+                                  <div>
+                                    <p className="text-sm font-semibold text-white">{preset.label}</p>
+                                    <p className="text-xs text-[color:var(--muted-foreground)]">
+                                      {isActive ? "Already active and tracking" : "Click to activate this objective"}
+                                    </p>
+                                  </div>
+                                  {isActive ? (
+                                    <Badge variant="subtle" className="text-emerald-400 bg-emerald-400/5">Active</Badge>
+                                  ) : (
+                                    <ArrowRight className="size-4 text-amber-400" />
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })
+                  }
+                >
+                  Add Goal
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {goals && goals.length > 0 ? (
+                  <div className="space-y-3">
+                    {goals.map((g) => {
+                      const progress = computeGoalProgressHomepage(g);
+                      return (
+                        <div key={g.setAt} className="rounded-2xl border border-white/10 bg-black/10 p-4 space-y-3 relative group">
+                          <div className="flex items-center justify-between gap-4">
+                            <p className="text-sm font-semibold text-white">🏆 {progress.label}</p>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="subtle" className="text-amber-400 font-semibold bg-amber-400/5">
+                                {progress.percent}%
+                              </Badge>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const nextGoals = goals.filter((item) => item.setAt !== g.setAt);
+                                  saveActiveGoals(nextGoals);
+                                  setGoals(nextGoals);
+                                }}
+                                className="rounded p-1 text-[color:var(--muted-foreground)] hover:bg-white/5 hover:text-red-400 transition"
+                                title="Remove Goal"
+                              >
+                                <X className="size-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          
+                          {/* Beautiful Progress Bar */}
+                          <div className="relative h-2 w-full rounded-full bg-white/5 overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-amber-500 to-amber-300 transition-all duration-500 ease-out"
+                              style={{ width: `${progress.percent}%` }}
+                            />
+                          </div>
+                          
+                          <div className="flex justify-between text-xs text-[color:var(--muted-foreground)]">
+                            <span>Current: {g.type === "zero_overdue" ? `${progress.current} overdue` : formatCurrency(progress.current, currencyCode)}</span>
+                            <span>Target: {g.type === "zero_overdue" ? "0" : formatCurrency(progress.target, currencyCode)}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-5 text-sm leading-6 text-[color:var(--muted-foreground)] text-center space-y-2">
+                    <p>No active goals are currently running.</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs text-[color:var(--accent)] hover:bg-white/5 rounded-lg px-3 py-1"
+                      onClick={() =>
+                        setActiveModal({
+                          title: "Select Active Goal",
+                          description: "Choose a target to sync with your gamified board.",
+                          children: (
+                            <div className="space-y-4 py-2 text-left">
+                              <p className="text-sm text-[color:var(--muted-foreground)]">
+                                Select a core preset or objective. Your progress updates live based on your Xero data.
+                              </p>
+                              <div className="space-y-2">
+                                {[
+                                  { type: "revenue_target", label: "Monthly Revenue Target (£5k)", defaultTarget: 5000 },
+                                  { type: "zero_overdue", label: "Clear Overdue Invoices", defaultTarget: 0 },
+                                  { type: "cash_buffer", label: "Cash Buffer Target (£10k)", defaultTarget: 10000 },
+                                  { type: "rent_collected", label: "Rent collected on time", defaultTarget: 100 },
+                                ].map((preset) => (
+                                  <button
+                                    key={preset.type}
+                                    onClick={() => {
+                                      const newGoal = {
+                                        type: preset.type as GoalType,
+                                        label: preset.label,
+                                        target: preset.defaultTarget,
+                                        setAt: new Date().toISOString(),
+                                      };
+                                      saveActiveGoals([newGoal]);
+                                      setGoals([newGoal]);
+                                      setActiveModal(null);
+                                    }}
+                                    className="w-full flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-4 text-left hover:border-amber-500/50 transition-colors"
+                                  >
+                                    <div>
+                                      <p className="text-sm font-semibold text-white">{preset.label}</p>
+                                      <p className="text-xs text-[color:var(--muted-foreground)]">
+                                        Click to activate this objective
+                                      </p>
+                                    </div>
+                                    <ArrowRight className="size-4 text-amber-400" />
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )
+                        })
+                      }
+                    >
+                      Set Objective
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </section>
           <div className="mt-8 border-t border-white/5 pt-8">
             <CliSeedSetup />
@@ -2085,6 +2388,98 @@ export function XeroDashboard() {
               {activeModal.children}
             </div>
           </div>
+        </div>
+      )}
+
+      {connected && (
+        <div className="fixed bottom-6 right-6 z-40">
+          <Button
+            onClick={openAccountant}
+            className="flex items-center gap-2 rounded-full bg-amber-500 hover:bg-amber-600 text-black shadow-lg shadow-amber-500/20 px-4 py-3 font-semibold transition-all duration-300"
+          >
+            <MessageSquare className="size-5" />
+            <span>Ask Accountant</span>
+          </Button>
+        </div>
+      )}
+
+      {connected && accountantOpen && (
+        <div className="fixed bottom-20 right-6 z-50 flex h-[500px] w-96 flex-col overflow-hidden rounded-3xl border border-white/10 bg-zinc-950/95 shadow-2xl backdrop-blur-xl animate-scale-in">
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-amber-400 font-semibold">Ledger Accountant</p>
+              <h4 className="text-sm font-bold text-white">Ask about your numbers</h4>
+            </div>
+            <button
+              onClick={() => setAccountantOpen(false)}
+              className="rounded-full p-1 text-[color:var(--muted-foreground)] hover:bg-white/10 hover:text-white transition-colors"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+            {accountantMessages.map((msg, idx) => (
+              <div
+                key={idx}
+                className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
+                  msg.role === "user"
+                    ? "ml-auto bg-amber-500 text-black font-medium"
+                    : "mr-auto border border-white/10 bg-white/5 text-white"
+                }`}
+              >
+                {msg.content}
+              </div>
+            ))}
+            {accountantLoading && (
+              <div className="mr-auto border border-white/10 bg-white/5 text-white max-w-[85%] rounded-2xl px-3 py-2 text-sm flex items-center gap-2">
+                <LoaderCircle className="size-4 animate-spin text-amber-400" />
+                <span>Thinking...</span>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Prompts */}
+          {accountantMessages.length <= 1 && (
+            <div className="px-4 py-2 border-t border-white/5 flex flex-wrap gap-1.5">
+              {["What should I fix first?", "How is cash flow?", "Tax cleanups?"].map((prompt) => (
+                <button
+                  key={prompt}
+                  onClick={() => void sendAccountantMessage(prompt)}
+                  className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-semibold text-white hover:border-amber-500/50 transition-colors"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Input Form */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void sendAccountantMessage();
+            }}
+            className="border-t border-white/10 p-3 flex gap-2"
+          >
+            <input
+              type="text"
+              placeholder="Ask a question..."
+              value={accountantInput}
+              onChange={(e) => setAccountantInput(e.target.value)}
+              className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-1.5 text-xs text-white placeholder-white/30 focus:border-amber-500/50 focus:outline-none"
+            />
+            <Button
+              type="submit"
+              size="sm"
+              disabled={accountantLoading || !accountantInput.trim()}
+              className="bg-amber-500 hover:bg-amber-600 text-black rounded-xl text-xs font-semibold px-3 py-1"
+            >
+              Send
+            </Button>
+          </form>
         </div>
       )}
     </div>
