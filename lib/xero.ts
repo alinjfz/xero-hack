@@ -25,6 +25,17 @@ type StoredTokenSet = TokenSetParameters & {
   scope?: string[] | string;
 };
 
+function normaliseStoredTokenSet(tokenSet: StoredTokenSet): StoredTokenSet {
+  return {
+    access_token: tokenSet.access_token,
+    refresh_token: tokenSet.refresh_token,
+    token_type: tokenSet.token_type,
+    expires_at: tokenSet.expires_at,
+    expires_in: tokenSet.expires_in,
+    scope: tokenSet.scope,
+  };
+}
+
 async function refreshTokenSetDirect(params: {
   clientId: string;
   clientSecret: string;
@@ -140,7 +151,7 @@ export function saveXeroSession(
     maxAge: 60 * 60 * 24 * 30,
   };
 
-  cookieStore.set(XERO_TOKEN_COOKIE, JSON.stringify(params.tokenSet), sharedOptions);
+  cookieStore.set(XERO_TOKEN_COOKIE, JSON.stringify(normaliseStoredTokenSet(params.tokenSet)), sharedOptions);
   cookieStore.set(XERO_TENANT_COOKIE, params.tenantId, sharedOptions);
   cookieStore.set(XERO_TENANT_NAME_COOKIE, params.tenantName, sharedOptions);
 }

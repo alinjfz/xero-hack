@@ -8,7 +8,14 @@ export async function GET() {
   const summary = await getXeroSummary(cookieStore);
 
   if (!summary.connected) {
-    return NextResponse.json({ error: "Xero is not connected." }, { status: 400 });
+    return NextResponse.json(
+      {
+        error: summary.error ?? "Xero is not connected.",
+        configured: summary.configured,
+        connected: summary.connected,
+      },
+      { status: 400 },
+    );
   }
 
   const board = buildOperationsBoard(summary);

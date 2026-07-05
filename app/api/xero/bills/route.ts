@@ -1,7 +1,35 @@
-import { Invoice, LineAmountTypes, Phone } from "xero-node";
+import { Invoice, LineAmountTypes } from "xero-node";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getAuthenticatedXeroClient } from "@/lib/xero";
+
+function extractXeroError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return "Unable to create bill in Xero.";
+  }
+
+  const maybeResponse = error as Error & {
+    response?: {
+      body?: {
+        message?: string;
+        detail?: string;
+        elements?: Array<{
+          validationErrors?: Array<{ message?: string }>;
+        }>;
+        Elements?: Array<{
+          ValidationErrors?: Array<{ Message?: string }>;
+        }>;
+      };
+    };
+  };
+
+  const body = maybeResponse.response?.body;
+  const validationMessage =
+    body?.elements?.flatMap((element) => element.validationErrors ?? []).find((item) => item.message)?.message ??
+    body?.Elements?.flatMap((element) => element.ValidationErrors ?? []).find((item) => item.Message)?.Message;
+
+  return validationMessage || body?.detail || body?.message || error.message || "Unable to create bill in Xero.";
+}
 
 export async function POST(request: Request) {
   const cookieStore = await cookies();
@@ -21,23 +49,32 @@ export async function POST(request: Request) {
       dueDate: string;
     };
 
+    if (!body.contactName?.trim() || !body.description?.trim() || !body.dueDate || !Number.isFinite(body.amount) || body.amount <= 0) {
+      return NextResponse.json({ error: "Enter a supplier, description, due date, and a positive amount." }, { status: 400 });
+    }
+
     const accountsResponse = await session.xero.accountingApi.getAccounts(session.tenantId);
     const expenseCode =
+      accountsResponse.body.accounts?.find(
+        (account) =>
+          (String(account.type) === "EXPENSE" || String(account.type) === "DIRECTCOSTS") &&
+          String(account.status) === "ACTIVE" &&
+          !account.systemAccount &&
+          account.code,
+      )?.code ??
       accountsResponse.body.accounts?.find((account) => String(account.type) === "EXPENSE" && account.code)?.code ??
-      accountsResponse.body.accounts?.find((account) => account.code)?.code ??
       "400";
 
     const contactsResponse = await session.xero.accountingApi.getContacts(session.tenantId);
-    let contactId = contactsResponse.body.contacts?.find((contact) => contact.name === body.contactName)?.contactID;
+    let contactId = contactsResponse.body.contacts?.find((contact) => contact.name?.trim() === body.contactName.trim())?.contactID;
 
     if (!contactId) {
       const created = await session.xero.accountingApi.createContacts(session.tenantId, {
         contacts: [
           {
-            name: body.contactName,
-            emailAddress: body.email,
+            name: body.contactName.trim(),
+            ...(body.email?.trim() ? { emailAddress: body.email.trim() } : {}),
             isSupplier: true,
-            phones: [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneNumber: "07700900000" }],
           },
         ],
       });
@@ -53,14 +90,14 @@ export async function POST(request: Request) {
         {
           type: Invoice.TypeEnum.ACCPAY,
           contact: { contactID: contactId },
-          reference: body.reference,
-          lineAmountTypes: LineAmountTypes.Inclusive,
+          reference: body.reference?.trim() || undefined,
+          lineAmountTypes: LineAmountTypes.NoTax,
           date: new Date().toISOString().split("T")[0],
           dueDate: body.dueDate,
-          status: Invoice.StatusEnum.AUTHORISED,
+          status: Invoice.StatusEnum.DRAFT,
           lineItems: [
             {
-              description: body.description,
+              description: body.description.trim(),
               quantity: 1,
               unitAmount: body.amount,
               accountCode: String(expenseCode),
@@ -74,7 +111,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "Unable to create bill in Xero.",
+        error: extractXeroError(error),
       },
       { status: 500 },
     );

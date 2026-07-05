@@ -76,6 +76,8 @@ type WorldTask = {
   location: SceneId;
   xp: number;
   reason: "overdue" | "draft" | "bill" | "goal" | "followup" | "tax";
+  goalSetAt?: string;
+  goalLabel?: string;
 };
 
 type GoalSuggestion = {
@@ -118,6 +120,51 @@ type HotspotStatus = {
   label: string;
   note: string;
 };
+
+type GoalCelebration = {
+  title: string;
+  eyebrow: string;
+  label: string;
+  xp: number;
+};
+
+function buildLocalGoalSuggestions(summary: Extract<WorldSummaryResponse, { connected: true }>, board: OperationsBoard | null) {
+  const home = summary.worlds.find((world) => world.id === "home")!;
+  const biz = summary.worlds.find((world) => world.id === "biz")!;
+  const invoiceAssistantCount = board?.invoiceAssistant?.length ?? biz.drafts.length;
+
+  const suggestions: GoalSuggestion[] = [
+    {
+      type: "rent_collected",
+      label: "Collect rent on time",
+      target: 100,
+      rationale: `House side has ${home.overdue.length} overdue rent items and ${home.drafts.length} draft rent items ready to turn into action.`,
+    },
+    {
+      type: "zero_overdue",
+      label: "Clear overdue invoices first",
+      target: 0,
+      rationale: `${summary.combined.overdueCount} overdue items are dragging collections and should be cleared before anything else.`,
+    },
+    {
+      type: "revenue_target",
+      label: "Push this month's revenue higher",
+      target: Math.max(5000, Math.ceil((biz.metrics.revenueThisMonth + biz.metrics.receivables) / 1000) * 1000),
+      rationale: `${invoiceAssistantCount} draft or send-ready items can be used to accelerate live revenue.`,
+    },
+  ];
+
+  if (summary.combined.bankBalance !== null) {
+    suggestions.push({
+      type: "cash_buffer",
+      label: "Protect the cash buffer",
+      target: Math.max(10000, Math.ceil((summary.combined.bankBalance + biz.metrics.billsDue + home.metrics.billsDue) / 1000) * 1000),
+      rationale: "Open supplier bills and property costs mean cash discipline should stay visible alongside revenue work.",
+    });
+  }
+
+  return suggestions.slice(0, 4);
+}
 
 const SCENE_META: Record<
   SceneId,
@@ -321,9 +368,9 @@ function buildPanel(
     invoices.filter((invoice, index, all) => all.findIndex((entry) => entry.invoiceId === invoice.invoiceId) === index);
   const homeNetSpread = home.metrics.revenueThisMonth - home.metrics.billsDue;
   const homeHistory = buildWorldHistoryChart(summary, "home");
-  const sharedTaxItems = board?.taxChecklist.filter((item) => item.worldId === "both") ?? [];
-  const bizTaxItems = board?.taxChecklist.filter((item) => item.worldId === "biz" || item.worldId === "both") ?? [];
-  const followupTargets = board?.followupTargets.filter((item) => item.worldId === "biz" || item.worldId === "shared") ?? [];
+  const sharedTaxItems = board?.taxChecklist?.filter((item) => item.worldId === "both") ?? [];
+  const bizTaxItems = board?.taxChecklist?.filter((item) => item.worldId === "biz" || item.worldId === "both") ?? [];
+  const followupTargets = board?.followupTargets?.filter((item) => item.worldId === "biz" || item.worldId === "shared") ?? [];
   const growthReports = board?.reports ?? [];
   const homeOverdue = home.overdue[0];
 
@@ -750,30 +797,27 @@ function buildGoalTasks(params: {
     return [] as ActionableTask[];
   }
 
+  const invoiceAssistant = params.board.invoiceAssistant ?? [];
+  const overdueChase = params.board.overdueChase ?? [];
+  const supplierBills = params.board.supplierBills ?? [];
+  const boardTasks = params.board.tasks ?? [];
   const list: ActionableTask[] = [];
+  const normaliseGoalText = (value: string) => value.trim().toLowerCase();
+  const matchingBoardTask = boardTasks.find((task) => normaliseGoalText(task.title) === normaliseGoalText(params.goal.label));
 
-  // Calculate progress percent to display in the main goal task detail
-  let progressText = "";
-  if (params.summary && params.goal.type !== "custom") {
-    const progress = computeGoalProgress(params.goal, params.summary as any);
-    progressText = ` (Current progress: ${Math.round(progress.percent)}%)`;
+  if (matchingBoardTask) {
+    list.push({
+      ...matchingBoardTask,
+      reason: "goal",
+      goalSetAt: params.goal.setAt,
+      goalLabel: params.goal.label,
+    });
+    return list;
   }
 
-  // Add the primary goal itself to the to-do list!
-  list.push({
-    id: `goal-primary-${params.goal.type}-${params.goal.setAt}`,
-    title: `🏆 Active Goal: ${params.goal.label}`,
-    detail: params.goal.type === "custom"
-      ? `Work on achieving your custom target.`
-      : `Reach target of ${formatCurrency(params.goal.target, params.currency)}${progressText}. Complete associated tasks to progress.`,
-    location: "outside", // visible globally on outside, home, or biz scenes
-    xp: 150,
-    reason: "goal",
-  });
-
   if (params.goal.type === "rent_collected") {
-    const rentDraft = params.board.invoiceAssistant.find((item) => item.worldId === "home");
-    const rentFollowup = params.board.overdueChase.find((item) => item.worldId === "home");
+    const rentDraft = invoiceAssistant.find((item) => item.worldId === "home");
+    const rentFollowup = overdueChase.find((item) => item.worldId === "home");
     const rentActions: Array<ActionableTask | null> = [
       rentDraft
         ? {
@@ -784,6 +828,8 @@ function buildGoalTasks(params: {
             location: "home",
             xp: 95,
             reason: "goal",
+            goalSetAt: params.goal.setAt,
+            goalLabel: params.goal.label,
             action: {
               intent: "invoice_send",
               customerName: rentDraft.contactName,
@@ -807,6 +853,8 @@ function buildGoalTasks(params: {
             location: "home",
             xp: 110,
             reason: "goal",
+            goalSetAt: params.goal.setAt,
+            goalLabel: params.goal.label,
             action: {
               intent: "rent_followup",
               customerName: rentFollowup.contactName,
@@ -825,7 +873,7 @@ function buildGoalTasks(params: {
 
     list.push(...rentActions.filter((action): action is ActionableTask => Boolean(action)));
   } else if (params.goal.type === "zero_overdue") {
-    const overdueTasks = params.board.overdueChase.slice(0, 2).map((item) => ({
+    const overdueTasks = overdueChase.slice(0, 2).map((item) => ({
       id: `goal-action-${item.invoiceId}`,
       invoiceId: item.invoiceId,
       title: `Clear ${item.invoiceNumber}`,
@@ -833,6 +881,8 @@ function buildGoalTasks(params: {
       location: sceneIdForWorld(item.worldId),
       xp: item.risk === "high" ? 110 : 85,
       reason: "goal" as const,
+      goalSetAt: params.goal.setAt,
+      goalLabel: params.goal.label,
       action: {
         intent: "overdue_followup" as const,
         customerName: item.contactName,
@@ -847,7 +897,7 @@ function buildGoalTasks(params: {
     }));
     list.push(...overdueTasks);
   } else if (params.goal.type === "revenue_target") {
-    const revenueTasks = params.board.invoiceAssistant.slice(0, 2).map((item) => ({
+    const revenueTasks = invoiceAssistant.slice(0, 2).map((item) => ({
       id: `goal-action-${item.invoiceId}`,
       invoiceId: item.invoiceId,
       title: `Turn ${item.invoiceNumber} into live revenue`,
@@ -855,6 +905,8 @@ function buildGoalTasks(params: {
       location: sceneIdForWorld(item.worldId),
       xp: 75,
       reason: "goal" as const,
+      goalSetAt: params.goal.setAt,
+      goalLabel: params.goal.label,
       action: {
         intent: "invoice_send" as const,
         customerName: item.contactName,
@@ -869,7 +921,7 @@ function buildGoalTasks(params: {
     }));
     list.push(...revenueTasks);
   } else if (params.goal.type === "cash_buffer") {
-    const bufferTasks = params.board.supplierBills.slice(0, 2).map((item) => ({
+    const bufferTasks = supplierBills.slice(0, 2).map((item) => ({
       id: `goal-action-${item.invoiceId}`,
       invoiceId: item.invoiceId,
       title: `Review ${item.invoiceNumber} before cash leaves`,
@@ -877,10 +929,12 @@ function buildGoalTasks(params: {
       location: sceneIdForWorld(item.worldId),
       xp: 55,
       reason: "goal" as const,
+      goalSetAt: params.goal.setAt,
+      goalLabel: params.goal.label,
     }));
     list.push(...bufferTasks);
   } else {
-    const otherTasks = params.board.tasks.slice(0, 2).map((item) => ({
+    const otherTasks = boardTasks.slice(0, 2).map((item) => ({
       ...item,
       title: item.title,
       detail: item.detail,
@@ -888,7 +942,32 @@ function buildGoalTasks(params: {
     list.push(...otherTasks);
   }
 
+  if (list.length === 0) {
+    let progressText = "";
+    if (params.summary && params.goal.type !== "custom") {
+      const progress = computeGoalProgress(params.goal, params.summary as any);
+      progressText = ` (Current progress: ${Math.round(progress.percent)}%)`;
+    }
+
+    list.push({
+      id: `goal-primary-${params.goal.type}-${params.goal.setAt}`,
+      title: `🏆 Active Goal: ${params.goal.label}`,
+      detail: params.goal.type === "custom"
+        ? "Work on achieving your custom target."
+        : `Reach target of ${formatCurrency(params.goal.target, params.currency)}${progressText}. Complete associated tasks to progress.`,
+      location: "outside",
+      xp: 150,
+      reason: "goal",
+      goalSetAt: params.goal.setAt,
+      goalLabel: params.goal.label,
+    });
+  }
+
   return list;
+}
+
+function isPrimaryGoalTask(task: WorldTask) {
+  return task.id.startsWith("goal-primary-");
 }
 
 function buildHotspotStatuses(summary: Extract<WorldSummaryResponse, { connected: true }>, tasks: WorldTask[]) {
@@ -1020,7 +1099,7 @@ function buildAccountantGreeting(
   const home = summary.worlds.find((world) => world.id === "home")!;
   const biz = summary.worlds.find((world) => world.id === "biz")!;
   const bank = summary.combined.bankBalance;
-  const firstOverdue = board?.overdueChase[0];
+  const firstOverdue = board?.overdueChase?.[0];
 
   return [
     `I can help you read ${summary.organisation.name}'s numbers in plain English.`,
@@ -1087,9 +1166,13 @@ export function WorldView() {
   const [earnedXp, setEarnedXp] = useState(0);
   const [draftModal, setDraftModal] = useState<DraftModalState | null>(null);
   const [draftLoadingId, setDraftLoadingId] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [goalCelebration, setGoalCelebration] = useState<GoalCelebration | null>(null);
+  const [completedGoalTasks, setCompletedGoalTasks] = useState<ActionableTask[]>([]);
   const [invoiceActionLoadingId, setInvoiceActionLoadingId] = useState<string | null>(null);
   const [billModalOpen, setBillModalOpen] = useState(false);
   const [billSubmitting, setBillSubmitting] = useState(false);
+  const [billError, setBillError] = useState<string | null>(null);
   const [todoOpen, setTodoOpen] = useState(true);
   const [completedOpen, setCompletedOpen] = useState(true);
   const [accountantOpen, setAccountantOpen] = useState(false);
@@ -1123,6 +1206,9 @@ export function WorldView() {
           setSummary(summaryData);
           setTasks(tasksData.tasks ?? []);
           setBoard(boardData);
+          if (summaryData.connected) {
+            setGoalSuggestions(buildLocalGoalSuggestions(summaryData, boardData));
+          }
         }
       } finally {
         if (!cancelled) {
@@ -1244,13 +1330,30 @@ export function WorldView() {
     currency: summary.organisation.baseCurrency,
     summary,
   }));
+  const effectiveCompletedTaskIds = completedTaskIds.filter((taskId) => {
+    if (!taskId.startsWith("goal-primary-")) {
+      return true;
+    }
+
+    const matchingGoal = goals.find((g) => taskId === `goal-primary-${g.type}-${g.setAt}`);
+    if (!matchingGoal) {
+      return false;
+    }
+
+    return computeGoalProgress(matchingGoal, connectedSummary).percent >= 100;
+  });
   const dedupedBoardTasks = tasks.filter(
-    (task) => !task.invoiceId || !goalTasks.some((goalTask) => goalTask.invoiceId && goalTask.invoiceId === task.invoiceId),
+    (task) =>
+      !goalTasks.some(
+        (goalTask) =>
+          goalTask.id === task.id ||
+          (task.invoiceId && goalTask.invoiceId && goalTask.invoiceId === task.invoiceId),
+      ),
   );
-  const allTasks: ActionableTask[] = [...goalTasks, ...dedupedBoardTasks];
+  const allTasks: ActionableTask[] = [...goalTasks, ...dedupedBoardTasks, ...completedGoalTasks];
   const sceneTasks = allTasks.filter((task) => task.location === scene || task.location === "outside");
-  const todoTasks = sceneTasks.filter((task) => !completedTaskIds.includes(task.id));
-  const completedTasks = sceneTasks.filter((task) => completedTaskIds.includes(task.id));
+  const todoTasks = sceneTasks.filter((task) => !effectiveCompletedTaskIds.includes(task.id));
+  const completedTasks = sceneTasks.filter((task) => effectiveCompletedTaskIds.includes(task.id));
   const sceneMeta = SCENE_META[scene];
   const totalReceivables = home.metrics.receivables + biz.metrics.receivables;
   const hotspotStatuses = buildHotspotStatuses(summary, allTasks);
@@ -1263,8 +1366,25 @@ export function WorldView() {
   const level = Math.max(1, Math.floor(totalXp / 300) + 1);
   const levelProgress = totalXp % 300;
 
+  function canResolveTask(task: WorldTask) {
+    if (!isPrimaryGoalTask(task)) {
+      return true;
+    }
+
+    const matchingGoal = goals.find((g) => task.id === `goal-primary-${g.type}-${g.setAt}`);
+    if (!matchingGoal) {
+      return false;
+    }
+
+    return computeGoalProgress(matchingGoal, connectedSummary).percent >= 100;
+  }
+
   function handleResolveTask(task: WorldTask) {
-    if (completedTaskIds.includes(task.id)) {
+    if (effectiveCompletedTaskIds.includes(task.id)) {
+      return;
+    }
+
+    if (!canResolveTask(task)) {
       return;
     }
 
@@ -1272,18 +1392,53 @@ export function WorldView() {
     setEarnedXp((current) => current + task.xp);
     const next = recordStreakAction("progress");
     setStreak(next);
+    setGoalCelebration({
+      eyebrow: "Task Completed",
+      title: "Nice work!",
+      label: task.title,
+      xp: task.xp,
+    });
+
+    if (task.reason === "goal") {
+      const matchingGoal = task.goalSetAt
+        ? goals.find((g) => g.setAt === task.goalSetAt)
+        : isPrimaryGoalTask(task)
+          ? goals.find((g) => task.id === `goal-primary-${g.type}-${g.setAt}`)
+          : null;
+
+      if (matchingGoal) {
+        const nextGoals = goals.filter((g) => g.setAt !== matchingGoal.setAt);
+        saveActiveGoals(nextGoals);
+        setGoals(nextGoals);
+        setCompletedGoalTasks((current) => [
+          ...current.filter((entry) => entry.id !== task.id),
+          { ...task },
+        ]);
+        setGoalCelebration({
+          eyebrow: "Goal Achieved",
+          title: "You achieved your goal!",
+          label: matchingGoal.label,
+          xp: task.xp,
+        });
+      }
+    }
   }
 
   function handleUndoTask(task: WorldTask) {
-    if (!completedTaskIds.includes(task.id)) {
+    if (!effectiveCompletedTaskIds.includes(task.id)) {
       return;
     }
 
     setCompletedTaskIds((current) => current.filter((id) => id !== task.id));
+    setCompletedGoalTasks((current) => current.filter((entry) => entry.id !== task.id));
     setEarnedXp((current) => Math.max(0, current - task.xp));
   }
 
   async function openGoalModal() {
+    if (goalSuggestions.length === 0) {
+      setGoalSuggestions(buildLocalGoalSuggestions(connectedSummary, board));
+    }
+
     if (goal) {
       setSelectedGoalType(goal.type);
       setSelectedGoalTarget(goal.target);
@@ -1333,6 +1488,8 @@ export function WorldView() {
       return;
     }
 
+    setDraftError(null);
+    setPanel(null);
     setDraftLoadingId(task.id);
 
     try {
@@ -1347,15 +1504,16 @@ export function WorldView() {
           senderCompany: connectedSummary.organisation.legalName ?? connectedSummary.organisation.name,
         }),
       });
-      const data = (await response.json()) as {
+      const data = (await response.json().catch(() => null)) as {
         draft?: string;
         subject?: string;
         body?: string;
         gmailHref?: string;
-      };
+        error?: string;
+      } | null;
 
-      if (!response.ok || !data.body || !data.subject) {
-        throw new Error("Unable to generate AI draft.");
+      if (!response.ok || !data?.body || !data.subject) {
+        throw new Error(data?.error || "Unable to generate AI draft.");
       }
 
       setDraftModal({
@@ -1367,6 +1525,8 @@ export function WorldView() {
         body: data.body,
         gmailHref: data.gmailHref ?? buildGmailHref({ to: task.action.recipientEmail, subject: data.subject, body: data.body }),
       });
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : "Unable to generate AI draft right now.");
     } finally {
       setDraftLoadingId(null);
     }
@@ -1511,6 +1671,7 @@ export function WorldView() {
 
     if (action.id === "add-property-bill") {
       setPanel(null);
+      setBillError(null);
       setBillModalOpen(true);
       return;
     }
@@ -1541,7 +1702,7 @@ export function WorldView() {
     if (action.id.startsWith("draft-followup:")) {
       const customerName = action.meta?.customerName;
       const retainerCandidate = action.meta?.retainerCandidate === "true";
-      const target = board?.followupTargets.find((item) => item.customerName === customerName);
+      const target = board?.followupTargets?.find((item) => item.customerName === customerName);
 
       if (!target || !customerName) {
         return;
@@ -1572,6 +1733,7 @@ export function WorldView() {
   }
 
   async function handleCreatePropertyBill() {
+    setBillError(null);
     setBillSubmitting(true);
 
     try {
@@ -1587,12 +1749,24 @@ export function WorldView() {
         }),
       });
 
+      const data = (await response.json().catch(() => null)) as { error?: string } | null;
+
       if (!response.ok) {
-        throw new Error("Unable to add property bill to Xero.");
+        throw new Error(data?.error || "Unable to add property bill to Xero.");
       }
 
       setBillModalOpen(false);
+      setBillForm({
+        contactName: "",
+        email: "",
+        reference: "",
+        description: "",
+        amount: "",
+        dueDate: "",
+      });
       window.location.reload();
+    } catch (error) {
+      setBillError(error instanceof Error ? error.message : "Unable to add property bill to Xero.");
     } finally {
       setBillSubmitting(false);
     }
@@ -1764,7 +1938,7 @@ export function WorldView() {
           </div>
         </header>
 
-        <div className="grid flex-1 gap-4 xl:grid-cols-[320px_minmax(0,1fr)_340px]">
+        <div className="grid flex-1 items-start gap-4 xl:grid-cols-[320px_minmax(0,1fr)_340px]">
           <div className="order-2 space-y-4 xl:order-1">
             <PanelShell eyebrow="Guide" title="Ledger sparrow">
               <div className="flex gap-3">
@@ -1852,8 +2026,8 @@ export function WorldView() {
 
           </div>
 
-          <div className="order-1 flex min-h-[420px] flex-col xl:order-2">
-            <div className="world-panel-shell flex-1 rounded-[30px] p-3 sm:p-4">
+          <div className="order-1 flex min-h-[420px] flex-col self-start xl:order-2">
+            <div className="world-panel-shell rounded-[30px] p-3 sm:p-4">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.24em] text-[color:var(--world-muted)]">{sceneMeta.title}</p>
@@ -2004,6 +2178,11 @@ export function WorldView() {
           <div className="order-3 space-y-4">
             <PanelShell eyebrow="Tasks" title="AI action list">
               <div className="space-y-3">
+                {draftError ? (
+                  <div className="rounded-[18px] border border-amber-400/40 bg-amber-100/80 px-4 py-3 text-sm text-amber-950">
+                    {draftError}
+                  </div>
+                ) : null}
                 {tasksLoading ? (
                   <div className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-4 text-sm text-[color:var(--world-muted)]">
                     Loading tasks...
@@ -2046,9 +2225,10 @@ export function WorldView() {
                                   <button
                                     type="button"
                                     onClick={() => handleResolveTask(task)}
-                                    className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-panel)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card)]"
+                                    disabled={!canResolveTask(task)}
+                                    className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-panel)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)] hover:bg-[color:var(--world-card)] disabled:cursor-not-allowed disabled:opacity-50"
                                   >
-                                    Complete
+                                    {isPrimaryGoalTask(task) ? (canResolveTask(task) ? "Achieve" : "In progress") : "Complete"}
                                   </button>
                                 </div>
                               </div>
@@ -2112,6 +2292,55 @@ export function WorldView() {
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {goalCelebration ? (
+          <>
+            <motion.div
+              className="pointer-events-none fixed inset-0 z-[70] bg-[rgba(12,11,18,0.32)]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            />
+            <motion.div
+              className="pointer-events-none fixed inset-0 z-[80] flex items-center justify-center px-6"
+              initial={{ opacity: 0, scale: 0.92 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 1.04 }}
+              transition={{ type: "spring", stiffness: 320, damping: 24 }}
+              onAnimationComplete={() => {
+                window.setTimeout(() => setGoalCelebration(null), 1200);
+              }}
+            >
+              <div className="relative overflow-hidden rounded-[32px] border border-[color:var(--world-accent-soft)] bg-[linear-gradient(135deg,rgba(246,200,90,0.95),rgba(255,241,194,0.98))] px-8 py-9 text-center shadow-[0_30px_90px_rgba(246,200,90,0.32)]">
+                <motion.div
+                  className="absolute -left-4 -top-4 size-20 rounded-full bg-white/35 blur-2xl"
+                  animate={{ scale: [1, 1.35, 1], opacity: [0.45, 0.85, 0.45] }}
+                  transition={{ duration: 1.1, repeat: 1 }}
+                />
+                <motion.div
+                  className="absolute -right-6 bottom-0 size-24 rounded-full bg-amber-300/50 blur-2xl"
+                  animate={{ scale: [1, 1.2, 1], opacity: [0.35, 0.75, 0.35] }}
+                  transition={{ duration: 1.2, repeat: 1, delay: 0.08 }}
+                />
+                <motion.div
+                  className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-white/55"
+                  animate={{ rotate: [0, -10, 10, 0], scale: [0.9, 1.08, 1] }}
+                  transition={{ duration: 0.8 }}
+                >
+                  <Sparkles className="size-8 text-amber-900" />
+                </motion.div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-amber-950/75">{goalCelebration.eyebrow}</p>
+                <h2 className="mt-2 font-[family-name:var(--font-display)] text-3xl text-amber-950">
+                  {goalCelebration.title}
+                </h2>
+                <p className="mt-2 text-sm text-amber-950/80">{goalCelebration.label}</p>
+                <p className="mt-4 text-sm font-semibold text-amber-950">+{goalCelebration.xp} XP</p>
+              </div>
+            </motion.div>
+          </>
+        ) : null}
+      </AnimatePresence>
 
       <AnimatePresence>
         {goalModalOpen ? (
@@ -2292,6 +2521,11 @@ export function WorldView() {
                 </Button>
               </div>
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+                {billError ? (
+                  <div className="rounded-[18px] border border-amber-400/40 bg-amber-100/80 px-4 py-3 text-sm text-amber-950">
+                    {billError}
+                  </div>
+                ) : null}
                 <input
                   value={billForm.contactName}
                   onChange={(event) => setBillForm((current) => ({ ...current, contactName: event.target.value }))}

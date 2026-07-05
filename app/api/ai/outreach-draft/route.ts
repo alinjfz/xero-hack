@@ -1,24 +1,92 @@
 import { NextResponse } from "next/server";
 import { getOpenRouterConfig } from "@/lib/openrouter";
 
+type OutreachDraftBody = {
+  customerName: string;
+  intent: "overdue_followup" | "retainer_pitch" | "check_in" | "invoice_send" | "rent_followup";
+  context: string[];
+  subjectHint?: string;
+  recipientEmail?: string;
+  senderName?: string;
+  senderCompany?: string;
+};
+
+function buildFallbackDraft(body: OutreachDraftBody) {
+  const senderLine = [body.senderName, body.senderCompany].filter(Boolean).join(" · ");
+
+  const intro =
+    body.intent === "overdue_followup"
+      ? `Hi ${body.customerName},\n\nFollowing up on the outstanding invoice on your side.`
+      : body.intent === "invoice_send"
+        ? `Hi ${body.customerName},\n\nYour invoice is ready and is being sent through now.`
+        : body.intent === "rent_followup"
+          ? `Hi ${body.customerName},\n\nFollowing up on the rent payment and checking whether anything is holding it up.`
+          : body.intent === "retainer_pitch"
+            ? `Hi ${body.customerName},\n\nI wanted to suggest a simpler recurring setup for the ongoing work between us.`
+            : `Hi ${body.customerName},\n\nJust checking in on the current work and anything you need from our side.`;
+
+  const close =
+    body.intent === "retainer_pitch"
+      ? "If helpful, I can outline a simple recurring arrangement that keeps things easier month to month."
+      : "If helpful, I can resend anything or clarify any details.";
+
+  const signoff = senderLine ? `\n\nBest,\n${senderLine}` : "\n\nBest,";
+
+  return `${intro}\n\n${close}${signoff}`;
+}
+
+function buildSubject(body: OutreachDraftBody) {
+  return (
+    body.subjectHint ??
+    (body.intent === "invoice_send"
+      ? `Invoice update for ${body.customerName}`
+      : body.intent === "rent_followup"
+        ? "Follow-up on your rent"
+        : body.intent === "retainer_pitch"
+          ? "A simpler way to handle ongoing work"
+          : "Quick follow-up from KISH")
+  );
+}
+
+function buildGmailHref(params: { recipientEmail?: string; subject: string; body: string }) {
+  const gmailHref = new URL("https://mail.google.com/mail/");
+  gmailHref.searchParams.set("view", "cm");
+  gmailHref.searchParams.set("fs", "1");
+  if (params.recipientEmail) {
+    gmailHref.searchParams.set("to", params.recipientEmail);
+  }
+  gmailHref.searchParams.set("su", params.subject);
+  gmailHref.searchParams.set("body", params.body);
+  return gmailHref.toString();
+}
+
 export async function POST(request: Request) {
+  const body = (await request.json().catch(() => null)) as OutreachDraftBody | null;
+
+  if (!body?.customerName || !body.intent || !Array.isArray(body.context)) {
+    return NextResponse.json({ error: "Invalid outreach draft request." }, { status: 400 });
+  }
+
   const config = getOpenRouterConfig();
+  const fallbackDraft = buildFallbackDraft(body);
+  const subject = buildSubject(body);
+  const fallbackPayload = {
+    draft: fallbackDraft,
+    subject,
+    body: fallbackDraft,
+    gmailHref: buildGmailHref({
+      recipientEmail: body.recipientEmail,
+      subject,
+      body: fallbackDraft,
+    }),
+    fallback: true,
+  };
 
   if (!config.configured || !config.apiKey || !config.model) {
-    return NextResponse.json({ error: "OpenRouter is not configured." }, { status: 400 });
+    return NextResponse.json(fallbackPayload, { headers: { "Cache-Control": "no-store" } });
   }
 
   try {
-    const body = (await request.json()) as {
-      customerName: string;
-      intent: "overdue_followup" | "retainer_pitch" | "check_in" | "invoice_send" | "rent_followup";
-      context: string[];
-      subjectHint?: string;
-      recipientEmail?: string;
-      senderName?: string;
-      senderCompany?: string;
-    };
-
     const promptIntent =
       body.intent === "overdue_followup"
         ? "a polite but firm overdue follow-up"
@@ -68,36 +136,20 @@ export async function POST(request: Request) {
     };
 
     const draft = data.choices?.[0]?.message?.content?.trim() ?? "";
-    const subject =
-      body.subjectHint ??
-      (body.intent === "invoice_send"
-        ? `Invoice update for ${body.customerName}`
-        : body.intent === "rent_followup"
-          ? `Follow-up on your rent`
-          : body.intent === "retainer_pitch"
-            ? `A simpler way to handle ongoing work`
-            : `Quick follow-up from KISH`);
-    const gmailHref = new URL("https://mail.google.com/mail/");
-    gmailHref.searchParams.set("view", "cm");
-    gmailHref.searchParams.set("fs", "1");
-    if (body.recipientEmail) {
-      gmailHref.searchParams.set("to", body.recipientEmail);
-    }
-    gmailHref.searchParams.set("su", subject);
-    gmailHref.searchParams.set("body", draft);
+    const finalDraft = draft || fallbackDraft;
 
     return NextResponse.json({
-      draft,
+      draft: finalDraft,
       subject,
-      body: draft,
-      gmailHref: gmailHref.toString(),
+      body: finalDraft,
+      gmailHref: buildGmailHref({
+        recipientEmail: body.recipientEmail,
+        subject,
+        body: finalDraft,
+      }),
+      fallback: !draft,
     });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unable to generate outreach draft.",
-      },
-      { status: 500 },
-    );
+  } catch {
+    return NextResponse.json(fallbackPayload, { headers: { "Cache-Control": "no-store" } });
   }
 }

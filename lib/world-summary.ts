@@ -147,7 +147,9 @@ function buildWorld(
     return diffDays >= 0 && diffDays <= 7;
   });
   const drafts = receivables.filter((invoice) => invoice.status === "DRAFT");
-  const openBills = payables.filter((invoice) => invoice.status === "AUTHORISED" && invoice.amountDue > 0);
+  const openBills = payables.filter(
+    (invoice) => (invoice.status === "AUTHORISED" || invoice.status === "DRAFT") && invoice.amountDue > 0,
+  );
   const revenueThisMonth = receivables
     .filter((invoice) => invoice.status === "PAID" || (invoice.status === "AUTHORISED" && invoice.amountDue > 0))
     .filter((invoice) => isCurrentMonth(invoice.issueDate))
