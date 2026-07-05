@@ -1241,11 +1241,14 @@ export function WorldView() {
                   <div className="world-scene-depth pointer-events-none absolute inset-0" />
                   {scene === "outside" ? (
                     <>
+                      <div className="world-sky-band pointer-events-none absolute inset-x-0 top-0 h-[34%]" />
                       <div className="world-sun pointer-events-none absolute right-[7%] top-[7%] size-24 rounded-full" />
                       <div className="world-cloud world-cloud-one pointer-events-none absolute left-[10%] top-[10%] h-8 w-16 rounded-full bg-white/65" />
                       <div className="world-cloud world-cloud-two pointer-events-none absolute right-[16%] top-[14%] h-10 w-20 rounded-full bg-white/50" />
+                      <div className="world-cloud world-cloud-three pointer-events-none absolute left-[44%] top-[8%] h-9 w-18 rounded-full bg-white/55" />
                       <div className="world-bird pointer-events-none absolute left-[28%] top-[18%]" />
                       <div className="world-bird world-bird-delayed pointer-events-none absolute left-[34%] top-[16%]" />
+                      <div className="world-bird world-bird-far pointer-events-none absolute left-[60%] top-[20%]" />
                       <div className="world-water-glint pointer-events-none absolute bottom-[18%] right-[14%] h-10 w-32" />
                       <div className="world-banner-shadow pointer-events-none absolute left-[21%] top-[53%] h-5 w-24 rounded-full" />
                       <div className="world-voxel-shadow pointer-events-none absolute bottom-[16%] left-[11%] h-8 w-[24%]" />
@@ -1253,6 +1256,8 @@ export function WorldView() {
                       <div className="world-garden world-garden-left pointer-events-none absolute bottom-[12%] left-[6%]" />
                       <div className="world-garden world-garden-right pointer-events-none absolute bottom-[12%] right-[16%]" />
                       <div className="world-stones pointer-events-none absolute bottom-[17%] left-[38%] h-12 w-[24%]" />
+                      <div className="world-flower-bed pointer-events-none absolute bottom-[11%] left-[19%] h-12 w-24" />
+                      <div className="world-flower-bed world-flower-bed-right pointer-events-none absolute bottom-[13%] right-[28%] h-12 w-24" />
                       <div className="world-leaf-drift pointer-events-none absolute left-[14%] top-[29%] h-24 w-24" />
                       <div className="world-window-spark pointer-events-none absolute left-[19%] top-[58%] h-6 w-6" />
                       <div className="world-window-spark world-window-spark-delayed pointer-events-none absolute left-[64%] top-[55%] h-6 w-6" />
@@ -1268,6 +1273,8 @@ export function WorldView() {
                       <div className="world-plant pointer-events-none absolute right-[12%] bottom-[22%] h-24 w-16" />
                       <div className="world-furnace-glow pointer-events-none absolute left-[49%] top-[25%] h-28 w-28" />
                       <div className="world-ember-pop pointer-events-none absolute left-[51%] top-[34%] h-16 w-16" />
+                      <div className="world-lamp-beam pointer-events-none absolute left-[48%] top-[18%] h-[38%] w-[22%]" />
+                      <div className="world-tv-glow pointer-events-none absolute left-[19%] top-[51%] h-14 w-18" />
                       <div className="world-voxel-shadow pointer-events-none absolute bottom-[14%] left-[18%] h-8 w-[22%]" />
                       <div className="world-voxel-shadow pointer-events-none absolute bottom-[16%] right-[11%] h-8 w-[23%]" />
                     </>
@@ -1283,6 +1290,8 @@ export function WorldView() {
                       <div className="world-sign-glow pointer-events-none absolute left-[33%] top-[15%] h-16 w-[34%]" />
                       <div className="world-ledger-scan pointer-events-none absolute left-[17%] top-[54%] h-28 w-[18%]" />
                       <div className="world-ledger-scan world-ledger-scan-delayed pointer-events-none absolute right-[10%] top-[56%] h-28 w-[18%]" />
+                      <div className="world-monitor-flicker pointer-events-none absolute left-[42%] top-[56%] h-12 w-[17%]" />
+                      <div className="world-city-glow pointer-events-none absolute inset-x-[8%] top-[13%] h-[26%]" />
                       <div className="world-voxel-shadow pointer-events-none absolute bottom-[15%] left-[42%] h-8 w-[28%]" />
                     </>
                   ) : null}

@@ -113,6 +113,13 @@ body {
   box-shadow: inset 0 -42px 80px rgba(19, 37, 28, 0.15);
 }
 
+.world-sky-band {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 55%),
+    linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(222, 247, 255, 0.24), rgba(255, 255, 255, 0));
+  animation: world-sky-shift 14s ease-in-out infinite;
+}
+
 .world-level-pill {
   display: inline-flex;
   align-items: center;
@@ -234,11 +241,23 @@ body {
 }
 
 .world-cloud {
-  animation: world-cloud-drift 9s linear infinite;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow:
+    18px 2px 0 4px rgba(255, 255, 255, 0.7),
+    40px -2px 0 8px rgba(255, 255, 255, 0.7),
+    60px 6px 0 2px rgba(255, 255, 255, 0.66),
+    26px 14px 0 0 rgba(214, 238, 255, 0.6),
+    54px 14px 0 0 rgba(214, 238, 255, 0.58);
+  image-rendering: pixelated;
+  animation: world-cloud-drift 11s linear infinite;
 }
 
 .world-cloud-two {
   animation-duration: 13s;
+}
+
+.world-cloud-three {
+  animation-duration: 17s;
 }
 
 .world-rain {
@@ -263,10 +282,11 @@ body {
 }
 
 .world-bird {
-  width: 22px;
-  height: 10px;
-  border-top: 3px solid rgba(63, 72, 92, 0.56);
-  border-radius: 999px;
+  width: 26px;
+  height: 12px;
+  background:
+    linear-gradient(135deg, transparent 35%, rgba(62, 75, 96, 0.72) 35% 55%, transparent 55%) left top / 13px 12px no-repeat,
+    linear-gradient(225deg, transparent 35%, rgba(62, 75, 96, 0.72) 35% 55%, transparent 55%) right top / 13px 12px no-repeat;
   animation: world-bird-flit 6s ease-in-out infinite;
 }
 
@@ -274,15 +294,20 @@ body {
   content: "";
   position: absolute;
   left: 10px;
-  top: -3px;
-  width: 22px;
-  height: 10px;
-  border-top: 3px solid rgba(63, 72, 92, 0.56);
-  border-radius: 999px;
+  top: 5px;
+  width: 6px;
+  height: 4px;
+  background: rgba(62, 75, 96, 0.78);
 }
 
 .world-bird-delayed {
   animation-delay: -2.5s;
+}
+
+.world-bird-far {
+  transform: scale(0.72);
+  opacity: 0.75;
+  animation-duration: 8s;
 }
 
 .world-garden {
@@ -320,6 +345,22 @@ body {
   filter: blur(8px);
 }
 
+.world-flower-bed {
+  background:
+    radial-gradient(circle at 10px 28px, #ffdc63 0 4px, transparent 4px),
+    radial-gradient(circle at 24px 22px, #ff7a72 0 4px, transparent 4px),
+    radial-gradient(circle at 38px 30px, #fff6dd 0 4px, transparent 4px),
+    radial-gradient(circle at 50px 20px, #7cc7ff 0 4px, transparent 4px),
+    radial-gradient(circle at 64px 28px, #ffdc63 0 4px, transparent 4px),
+    radial-gradient(circle at 80px 22px, #ff7a72 0 4px, transparent 4px),
+    linear-gradient(180deg, transparent 0 24px, rgba(74, 126, 59, 0.94) 24px 100%);
+  animation: world-flower-sway 4.4s ease-in-out infinite;
+}
+
+.world-flower-bed-right {
+  animation-delay: -2s;
+}
+
 .world-voxel-shadow {
   border-radius: 999px;
   background: rgba(28, 52, 37, 0.22);
@@ -334,6 +375,12 @@ body {
 
 .world-room-glow-wide {
   background: radial-gradient(circle, rgba(255, 228, 167, 0.44), transparent 68%);
+}
+
+.world-lamp-beam {
+  background: linear-gradient(180deg, rgba(255, 236, 185, 0.28), rgba(255, 236, 185, 0));
+  clip-path: polygon(45% 0, 55% 0, 90% 100%, 10% 100%);
+  filter: blur(8px);
 }
 
 .world-hanging-lamp::before {
@@ -401,6 +448,12 @@ body {
     radial-gradient(circle at 30px 18px, #6cab64 0 16px, transparent 16px),
     radial-gradient(circle at 44px 40px, #8ed37f 0 14px, transparent 14px),
     radial-gradient(circle at 54px 22px, #5b9c55 0 12px, transparent 12px);
+}
+
+.world-tv-glow {
+  background: radial-gradient(circle, rgba(138, 199, 255, 0.34), transparent 70%);
+  filter: blur(8px);
+  animation: world-tv-flicker 3.1s steps(3) infinite;
 }
 
 .world-ledger-lights {
@@ -501,6 +554,18 @@ body {
   animation-delay: -1.2s;
 }
 
+.world-monitor-flicker {
+  background: linear-gradient(180deg, rgba(163, 232, 255, 0.28), rgba(77, 183, 255, 0.1));
+  filter: blur(5px);
+  animation: world-tv-flicker 2.4s steps(4) infinite;
+}
+
+.world-city-glow {
+  background:
+    linear-gradient(90deg, rgba(255, 233, 176, 0.12), transparent 15%, transparent 85%, rgba(255, 233, 176, 0.12)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 55%);
+}
+
 @keyframes world-smoke-rise {
   0% {
     transform: translateY(0) scale(1);
@@ -527,7 +592,7 @@ body {
     transform: translateX(0);
   }
   100% {
-    transform: translateX(30px);
+    transform: translateX(48px);
   }
 }
 
@@ -556,7 +621,7 @@ body {
     transform: translateX(0) translateY(0);
   }
   50% {
-    transform: translateX(12px) translateY(-6px);
+    transform: translateX(18px) translateY(-8px);
   }
 }
 
@@ -609,6 +674,28 @@ body {
   }
 }
 
+@keyframes world-sky-shift {
+  0%,
+  100% {
+    transform: translateX(-18px);
+    opacity: 0.38;
+  }
+  50% {
+    transform: translateX(18px);
+    opacity: 0.7;
+  }
+}
+
+@keyframes world-flower-sway {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-2px) rotate(1deg);
+  }
+}
+
 @keyframes world-window-sparkle {
   0%,
   100% {
@@ -618,6 +705,16 @@ body {
   50% {
     transform: scale(1.15);
     opacity: 0.9;
+  }
+}
+
+@keyframes world-tv-flicker {
+  0%,
+  100% {
+    opacity: 0.18;
+  }
+  50% {
+    opacity: 0.52;
   }
 }
 
