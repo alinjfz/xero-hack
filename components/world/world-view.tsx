@@ -148,7 +148,7 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
     },
     {
       id: "outside-mailbox",
-      label: "Mailbox",
+      label: "Post box",
       x: 27.5,
       y: 60.5,
       width: 7,
@@ -170,9 +170,9 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
   home: [
     {
       id: "home-rent",
-      label: "Rent ledger",
-      x: 48,
-      y: 63,
+      label: "Rent vault",
+      x: 43,
+      y: 62,
       width: 18,
       height: 28,
       icon: ScrollText,
@@ -190,10 +190,10 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
     },
     {
       id: "home-outlook",
-      label: "Property outlook",
+      label: "Outlook desk",
       x: 16,
-      y: 27,
-      width: 24,
+      y: 58,
+      width: 18,
       height: 18,
       icon: Star,
       action: { type: "panel", target: "home-outlook" },
@@ -1458,16 +1458,10 @@ export function WorldView() {
                       <div className="world-bird pointer-events-none absolute left-[28%] top-[18%]" />
                       <div className="world-bird world-bird-delayed pointer-events-none absolute left-[34%] top-[16%]" />
                       <div className="world-bird world-bird-far pointer-events-none absolute left-[60%] top-[20%]" />
-                      <div className="world-water-glint pointer-events-none absolute bottom-[18%] right-[14%] h-10 w-32" />
-                      <div className="world-banner-shadow pointer-events-none absolute left-[21%] top-[53%] h-5 w-24 rounded-full" />
                       <div className="world-voxel-shadow pointer-events-none absolute bottom-[16%] left-[11%] h-8 w-[24%]" />
                       <div className="world-voxel-shadow pointer-events-none absolute bottom-[18%] left-[49%] h-10 w-[31%]" />
-                      <div className="world-garden world-garden-left pointer-events-none absolute bottom-[12%] left-[6%]" />
-                      <div className="world-garden world-garden-right pointer-events-none absolute bottom-[12%] right-[16%]" />
-                      <div className="world-stones pointer-events-none absolute bottom-[17%] left-[38%] h-12 w-[24%]" />
                       <div className="world-flower-bed pointer-events-none absolute bottom-[11%] left-[19%] h-12 w-24" />
                       <div className="world-flower-bed world-flower-bed-right pointer-events-none absolute bottom-[13%] right-[28%] h-12 w-24" />
-                      <div className="world-leaf-drift pointer-events-none absolute left-[14%] top-[29%] h-24 w-24" />
                       <div className="world-window-spark pointer-events-none absolute left-[19%] top-[58%] h-6 w-6" />
                       <div className="world-window-spark world-window-spark-delayed pointer-events-none absolute left-[64%] top-[55%] h-6 w-6" />
                     </>
