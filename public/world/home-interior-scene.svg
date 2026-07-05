@@ -70,6 +70,16 @@
   <rect x="1204" y="554" width="40" height="32" fill="#EAC56E"/>
   <rect x="1140" y="600" width="112" height="82" fill="#5B3823"/>
 
+  <polygon points="1016,418 1172,418 1154,402 998,402" fill="#A06D44"/>
+  <polygon points="1016,418 1016,512 998,496 998,402" fill="#7A5332"/>
+  <polygon points="1016,418 1172,418 1172,512 1016,512" fill="#8D5F3B"/>
+  <rect x="1040" y="438" width="108" height="20" fill="#F5DEAD"/>
+  <rect x="1048" y="462" width="30" height="24" fill="#FFF6DA"/>
+  <rect x="1086" y="458" width="34" height="28" fill="#D5A45A"/>
+  <rect x="1128" y="454" width="14" height="34" fill="#FFF6DA"/>
+  <rect x="1078" y="512" width="32" height="54" fill="#6F4430"/>
+  <rect x="1034" y="522" width="40" height="16" fill="#875636"/>
+
   <polygon points="918,742 1368,742 1334,716 884,716" fill="#6A4327"/>
   <polygon points="918,742 918,774 884,748 884,716" fill="#4E311D"/>
   <polygon points="918,742 1368,742 1368,774 918,774" fill="#5B3A24"/>

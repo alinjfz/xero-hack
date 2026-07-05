@@ -15,6 +15,7 @@ import {
   ScrollText,
   Sparkles,
   Star,
+  UserRound,
   Warehouse,
   X,
 } from "lucide-react";
@@ -61,7 +62,8 @@ type SceneHotspot = {
   icon: typeof House;
   action:
     | { type: "scene"; scene: SceneId }
-    | { type: "panel"; target: PanelTarget };
+    | { type: "panel"; target: PanelTarget }
+    | { type: "accountant" };
 };
 
 type WorldTask = {
@@ -101,6 +103,11 @@ type DraftModalState = {
   subject: string;
   body: string;
   gmailHref: string;
+};
+
+type AccountantMessage = {
+  role: "user" | "assistant";
+  content: string;
 };
 
 type HotspotStatus = {
@@ -150,9 +157,9 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
     {
       id: "outside-mailbox",
       label: "Post box",
-      x: 27.5,
-      y: 60.5,
-      width: 7,
+      x: 36,
+      y: 68,
+      width: 7.5,
       height: 14,
       icon: Mailbox,
       action: { type: "panel", target: "mailbox" },
@@ -160,9 +167,9 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
     {
       id: "outside-business",
       label: "Business",
-      x: 50,
+      x: 67,
       y: 57,
-      width: 28,
+      width: 25,
       height: 24,
       icon: BriefcaseBusiness,
       action: { type: "scene", scene: "biz" },
@@ -202,9 +209,9 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
     {
       id: "home-tax",
       label: "Landlord tax desk",
-      x: 62,
-      y: 27,
-      width: 24,
+      x: 69,
+      y: 47,
+      width: 16,
       height: 18,
       icon: ScrollText,
       action: { type: "panel", target: "home-tax" },
@@ -270,6 +277,16 @@ const HOTSPOTS: Record<SceneId, SceneHotspot[]> = {
       height: 14,
       icon: BriefcaseBusiness,
       action: { type: "panel", target: "biz-followups" },
+    },
+    {
+      id: "biz-accountant",
+      label: "Accountant",
+      x: 34,
+      y: 61,
+      width: 12,
+      height: 24,
+      icon: UserRound,
+      action: { type: "accountant" },
     },
   ],
 };
@@ -941,6 +958,12 @@ function buildHotspotStatuses(summary: Extract<WorldSummaryResponse, { connected
       label: "Growth moves",
       note: "Accounts worth follow-up or conversion should light up here.",
     },
+    "biz-accountant": {
+      count: Math.max(0, taxTaskCount + biz.overdue.length),
+      tone: countTone(taxTaskCount + biz.overdue.length, 4),
+      label: "Ask accountant",
+      note: "Use the accountant for grounded answers based on the current ledger.",
+    },
     overview: {
       count: overdueEverywhere + openTasks,
       tone: countTone(overdueEverywhere + openTasks, 5),
@@ -948,6 +971,29 @@ function buildHotspotStatuses(summary: Extract<WorldSummaryResponse, { connected
       note: "Use this as the global pressure gauge for the whole world.",
     },
   } satisfies Record<string, HotspotStatus>;
+}
+
+function buildAccountantGreeting(
+  summary: Extract<WorldSummaryResponse, { connected: true }>,
+  board: OperationsBoard | null,
+) {
+  const home = summary.worlds.find((world) => world.id === "home")!;
+  const biz = summary.worlds.find((world) => world.id === "biz")!;
+  const bank = summary.combined.bankBalance;
+  const firstOverdue = board?.overdueChase[0];
+
+  return [
+    `I can help you read ${summary.organisation.name}'s numbers in plain English.`,
+    bank !== null
+      ? `Cash in bank is ${formatCurrency(bank, summary.organisation.baseCurrency)}.`
+      : "Bank balance is not visible from the current connection.",
+    `Business receivables open: ${formatCurrency(biz.metrics.receivables, summary.organisation.baseCurrency)}.`,
+    `Property receivables open: ${formatCurrency(home.metrics.receivables, summary.organisation.baseCurrency)}.`,
+    firstOverdue
+      ? `The sharpest pressure right now is ${firstOverdue.invoiceNumber}, which is ${firstOverdue.daysOverdue} days overdue.`
+      : "There are no overdue invoices showing right now.",
+    "Ask me what to fix first, how cash looks, or what to clean up before tax time.",
+  ].join(" ");
 }
 
 function getTaskActionLabel(task: ActionableTask) {
@@ -1002,6 +1048,10 @@ export function WorldView() {
   const [invoiceActionLoadingId, setInvoiceActionLoadingId] = useState<string | null>(null);
   const [billModalOpen, setBillModalOpen] = useState(false);
   const [billSubmitting, setBillSubmitting] = useState(false);
+  const [accountantOpen, setAccountantOpen] = useState(false);
+  const [accountantMessages, setAccountantMessages] = useState<AccountantMessage[]>([]);
+  const [accountantInput, setAccountantInput] = useState("");
+  const [accountantLoading, setAccountantLoading] = useState(false);
   const [billForm, setBillForm] = useState({
     contactName: "",
     email: "",
@@ -1496,13 +1546,80 @@ export function WorldView() {
     openTaskArea(task);
   }
 
+  function openAccountant() {
+    setScene("biz");
+    setPanel(null);
+    setAccountantOpen(true);
+    setAccountantMessages((current) =>
+      current.length > 0
+        ? current
+        : [
+            {
+              role: "assistant",
+              content: buildAccountantGreeting(connectedSummary, board),
+            },
+          ],
+    );
+  }
+
+  async function sendAccountantMessage(messageText?: string) {
+    const text = (messageText ?? accountantInput).trim();
+
+    if (!text || accountantLoading) {
+      return;
+    }
+
+    const nextMessages = [...accountantMessages, { role: "user" as const, content: text }].slice(-10);
+    setAccountantMessages(nextMessages);
+    setAccountantInput("");
+    setAccountantLoading(true);
+
+    try {
+      const response = await fetch("/api/ai/accountant-chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          messages: nextMessages,
+        }),
+      });
+      const data = (await response.json()) as { reply?: string };
+
+      if (!response.ok || !data.reply) {
+        throw new Error("Unable to reach the accountant.");
+      }
+
+      setAccountantMessages((current) => [...current, { role: "assistant", content: data.reply! }]);
+    } catch {
+      setAccountantMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          content:
+            "I couldn't answer live just now. Based on your ledger, start with overdue invoices, draft hygiene, and supplier bill review before moving to lower-pressure work.",
+        },
+      ]);
+    } finally {
+      setAccountantLoading(false);
+    }
+  }
+
   function handleHotspot(hotspot: SceneHotspot) {
     if (hotspot.action.type === "scene") {
       setScene(hotspot.action.scene);
       setPanel(null);
+      setAccountantOpen(false);
       return;
     }
 
+    if (hotspot.action.type === "accountant") {
+      openAccountant();
+      return;
+    }
+
+    setAccountantOpen(false);
     setPanel(buildPanel(connectedSummary, hotspot.action.target, board));
   }
 
@@ -1672,8 +1789,6 @@ export function WorldView() {
                       <div className="world-bird world-bird-far pointer-events-none absolute left-[60%] top-[20%]" />
                       <div className="world-voxel-shadow pointer-events-none absolute bottom-[16%] left-[11%] h-8 w-[24%]" />
                       <div className="world-voxel-shadow pointer-events-none absolute bottom-[18%] left-[49%] h-10 w-[31%]" />
-                      <div className="world-flower-bed pointer-events-none absolute bottom-[11%] left-[19%] h-12 w-24" />
-                      <div className="world-flower-bed world-flower-bed-right pointer-events-none absolute bottom-[13%] right-[28%] h-12 w-24" />
                       <div className="world-window-spark pointer-events-none absolute left-[19%] top-[58%] h-6 w-6" />
                       <div className="world-window-spark world-window-spark-delayed pointer-events-none absolute left-[64%] top-[55%] h-6 w-6" />
                     </>
@@ -1708,6 +1823,7 @@ export function WorldView() {
                       <div className="world-monitor-flicker pointer-events-none absolute left-[42%] top-[56%] h-12 w-[17%]" />
                       <div className="world-city-glow pointer-events-none absolute inset-x-[8%] top-[13%] h-[26%]" />
                       <div className="world-voxel-shadow pointer-events-none absolute bottom-[15%] left-[42%] h-8 w-[28%]" />
+                      <div className="world-accountant-glow pointer-events-none absolute left-[23%] top-[52%] h-20 w-20" />
                     </>
                   ) : null}
 
@@ -2047,6 +2163,102 @@ export function WorldView() {
                 >
                   {billSubmitting ? "Adding to Xero..." : "Add property bill"}
                 </Button>
+              </div>
+            </motion.div>
+          </>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {accountantOpen ? (
+          <>
+            <motion.button
+              type="button"
+              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setAccountantOpen(false)}
+            />
+            <motion.div
+              className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-[color:var(--world-border)] bg-[color:var(--world-panel)] shadow-2xl"
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 380, damping: 36 }}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-[color:var(--world-border)] px-6 py-5">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--world-muted)]">Business accountant</p>
+                  <h2 className="font-[family-name:var(--font-display)] text-2xl text-[color:var(--world-ink)]">Ask about your numbers</h2>
+                  <p className="mt-1 text-sm text-[color:var(--world-muted)]">Answers stay grounded in your connected data.</p>
+                </div>
+                <Button variant="secondary" size="sm" onClick={() => setAccountantOpen(false)}>
+                  <X className="size-4" />
+                </Button>
+              </div>
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+                <div className="flex flex-wrap gap-2">
+                  {["What should I fix first?", "How is cash flow looking?", "What should I clean up before tax time?"].map(
+                    (prompt) => (
+                      <button
+                        key={prompt}
+                        type="button"
+                        onClick={() => void sendAccountantMessage(prompt)}
+                        className="rounded-[12px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-3 py-2 text-xs font-semibold text-[color:var(--world-ink)] transition hover:border-[color:var(--world-accent-soft)]"
+                      >
+                        {prompt}
+                      </button>
+                    ),
+                  )}
+                </div>
+                <div className="space-y-3">
+                  {accountantMessages.map((message, index) => (
+                    <div
+                      key={`${message.role}-${index}`}
+                      className={`rounded-[18px] border px-4 py-3 ${
+                        message.role === "assistant"
+                          ? "border-[color:var(--world-border)] bg-[color:var(--world-card)]"
+                          : "border-[color:var(--world-accent-soft)] bg-[color:var(--world-card-strong)]"
+                      }`}
+                    >
+                      <p className="text-[11px] uppercase tracking-[0.2em] text-[color:var(--world-muted)]">
+                        {message.role === "assistant" ? "Accountant" : "You"}
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[color:var(--world-ink)]">{message.content}</p>
+                    </div>
+                  ))}
+                  {accountantLoading ? (
+                    <div className="rounded-[18px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-sm text-[color:var(--world-muted)]">
+                      Accountant is reviewing the ledger...
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              <div className="border-t border-[color:var(--world-border)] px-6 py-5">
+                <div className="space-y-3">
+                  <textarea
+                    value={accountantInput}
+                    onChange={(event) => setAccountantInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void sendAccountantMessage();
+                      }
+                    }}
+                    rows={3}
+                    className="w-full rounded-[16px] border border-[color:var(--world-border)] bg-[color:var(--world-card)] px-4 py-3 text-[color:var(--world-ink)] outline-none"
+                    placeholder="Ask about cash, overdue invoices, tax cleanup, or what to do next."
+                  />
+                  <Button
+                    type="button"
+                    onClick={() => void sendAccountantMessage()}
+                    disabled={!accountantInput.trim() || accountantLoading}
+                    className="w-full rounded-[16px] bg-[color:var(--world-accent)] text-[#1d140d] hover:bg-[color:var(--world-accent-2)]"
+                  >
+                    {accountantLoading ? "Thinking..." : "Ask accountant"}
+                  </Button>
+                </div>
               </div>
             </motion.div>
           </>
